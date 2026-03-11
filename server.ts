@@ -93,7 +93,7 @@ async function startServer() {
     app.use(express.static('dist'));
     
     // SPA fallback: redirect all non-API requests to index.html
-    app.get('*', (req, res) => {
+    app.get('{*path}', (req, res) => {
       if (!req.path.startsWith('/api')) {
         res.sendFile('index.html', { root: 'dist' });
       }
