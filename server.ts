@@ -88,6 +88,16 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+  } else {
+    // Serve static files in production
+    app.use(express.static('dist'));
+    
+    // SPA fallback: redirect all non-API requests to index.html
+    app.get('*', (req, res) => {
+      if (!req.path.startsWith('/api')) {
+        res.sendFile('index.html', { root: 'dist' });
+      }
+    });
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
