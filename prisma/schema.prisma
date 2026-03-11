@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// 1. Gestion des Utilisateurs et Profils
+model User {
+  id            String    @id @default(cuid())
+  pseudo        String    @unique // Pour être identifiable [cite: 3]
+  photoUrl      String?   // Photo de profil [cite: 3, 5]
+  bio           String?   // Bio utilisateur [cite: 6]
+  createdAt     DateTime  @default(now())
+  
+  // Relations
+  ownedJams     JamSession[] @relation("HostRelation")
+  tracksAdded   Track[]      @relation("UserTracks")
+}
+
+// 2. Gestion de la Session de Jam
+model JamSession {
+  id            String    @id @default(cuid())
+  sessionId     String    @unique // Format "JAM-8821" [cite: 28, 88]
+  isActive      Boolean   @default(true) // Statut "LIVE SESSION" [cite: 25, 82]
+  createdAt     DateTime  @default(now())
+  
+  // Paramètres de Permissions (Sprint 1 & 2)
+  votingEnabled Boolean   @default(true)  // [cite: 31, 100]
+  guestUploads  Boolean   @default(false) // [cite: 33, 106]
+  explicitFilter Boolean  @default(false) // [cite: 35]
+  
+  // Relations
+  hostId        String
+  host          User      @relation("HostRelation", fields: [hostId], references: [id])
+  queue         Track[]   @relation("SessionQueue")
+}
+
+// 3. File d'attente (Live Queue)
+model Track {
+  id            String    @id @default(cuid())
+  title         String    // ex: "Midnight City" [cite: 15, 46, 116]
+  artist        String    // ex: "M83" [cite: 16, 47, 97]
+  album         String?   // [cite: 16, 49]
+  thumbnail     String?   // Image du morceau
+  sourceId      String    // ID YouTube ou Spotify [cite: 13, 14]
+  platform      String    // "YOUTUBE", "SPOTIFY", etc. [cite: 44, 45]
+  
+  duration      Int?      // Durée en secondes [cite: 62]
+  order         Int       @default(0) // Pour l'ordre de passage [cite: 60, 91]
+  status        TrackStatus @default(QUEUED)
+  
+  // Relations
+  sessionId     String
+  session       JamSession @relation("SessionQueue", fields: [sessionId], references: [id], onDelete: Cascade)
+  addedById     String
+  addedBy       User       @relation("UserTracks", fields: [addedById], references: [id])
+  
+  createdAt     DateTime   @default(now())
+}
+
+enum TrackStatus {
+  PLAYING  // "NOW PLAYING" [cite: 57, 89]
+  QUEUED   // "Next up in the mix" [cite: 60, 91]
+  PLAYED
+}

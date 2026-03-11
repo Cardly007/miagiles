@@ -1,0 +1,5 @@
+{
+  "name": "OnlyJam",
+  "description": "A social music app for real-time collaborative listening sessions. Create Jams, share QR codes, and build playlists together.",
+  "requestFramePermissions": []
+}
