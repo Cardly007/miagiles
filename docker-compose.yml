@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  onlyjam-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: onlyjam_app
+    restart: unless-stopped
+    ports:
+      # Map host ports 4000 and 4001 to container port 3000
+      - "4000:3000"
+      - "4001:3000"
+    environment:
+      - NODE_ENV=production
+      # Pull variables from .env file
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # Store the database in a dedicated data directory, not the prisma directory
+      - DATABASE_URL=file:/app/data/dev.db
+    volumes:
+      # Persist only the SQLite database directory to avoid overwriting schema.prisma
+      - onlyjam-db-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  onlyjam-db-data:
+    name: onlyjam_db_data
