@@ -34,6 +34,7 @@ model JamSession {
   explicitFilter Boolean  @default(false) // [cite: 35]
   approvalRequired Boolean @default(false)
   currentTrackStartTime DateTime? // Time the track started for sync
+  isPaused      Boolean   @default(false) // Is the current track paused
   
   // Relations
   hostId        String

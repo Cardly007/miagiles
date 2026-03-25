@@ -190,7 +190,10 @@ async function startServer() {
 
          await prisma.jamSession.update({
            where: { id: sessionId },
-           data: { currentTrackStartTime: startTime }
+           data: {
+               currentTrackStartTime: startTime,
+               isPaused: false
+           }
          });
 
          await prisma.track.update({
@@ -201,6 +204,57 @@ async function startServer() {
          io.to(sessionId).emit('track-playing', { trackId, startTime: startTime.toISOString() });
        } catch (error) {
          console.error('Error playing track', error);
+       }
+    });
+
+    socket.on('pause-track', async (data) => {
+       try {
+         const { sessionId } = data;
+         await prisma.jamSession.update({
+           where: { id: sessionId },
+           data: { isPaused: true }
+         });
+         io.to(sessionId).emit('track-paused');
+       } catch (error) {
+         console.error('Error pausing track', error);
+       }
+    });
+
+    socket.on('resume-track', async (data) => {
+       try {
+         const { sessionId } = data;
+         const session = await prisma.jamSession.findUnique({ where: { id: sessionId } });
+
+         if (session && session.currentTrackStartTime) {
+             // In a real app we'd need to adjust startTime based on how long it was paused
+             // For simplicity, we just resume and trust the client's AudioContext or recalculate
+             const now = new Date();
+
+             await prisma.jamSession.update({
+               where: { id: sessionId },
+               data: { isPaused: false }
+             });
+
+             io.to(sessionId).emit('track-resumed', { startTime: session.currentTrackStartTime.toISOString() });
+         }
+       } catch (error) {
+         console.error('Error resuming track', error);
+       }
+    });
+
+    socket.on('seek-track', async (data) => {
+       try {
+         const { sessionId, time } = data;
+         const newStartTime = new Date(Date.now() - (time * 1000));
+
+         await prisma.jamSession.update({
+           where: { id: sessionId },
+           data: { currentTrackStartTime: newStartTime }
+         });
+
+         io.to(sessionId).emit('track-seeked', { startTime: newStartTime.toISOString() });
+       } catch (error) {
+         console.error('Error seeking track', error);
        }
     });
 

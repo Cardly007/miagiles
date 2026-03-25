@@ -41,6 +41,7 @@ export interface JamSession {
     syncMode: boolean; // "Jam Sync"
   };
   currentTrackStartTime?: string; // Added for Sync
+  isPaused?: boolean;
 }
 
 export enum ViewState {
