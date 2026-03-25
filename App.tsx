@@ -378,6 +378,10 @@ const SearchView: React.FC<{
     const [apiResults, setApiResults] = useState<Song[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     
+    // Audio Preview State
+    const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
+    const [previewingSongId, setPreviewingSongId] = useState<string | null>(null);
+
     useEffect(() => {
         if (!query) {
             setApiResults([]);
@@ -391,9 +395,10 @@ const SearchView: React.FC<{
                     const data = await res.json();
                     const mappedData: Song[] = data.map((d: any) => ({
                         id: d.id,
+                        sourceId: d.sourceId,
                         title: d.title,
                         artist: d.artist,
-                        coverUrl: d.thumbnail,
+                        coverUrl: d.coverUrl,
                         source: d.platform === 'YOUTUBE' ? 'YouTube' : d.platform,
                         duration: `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}`,
                         votes: 0,
@@ -410,6 +415,44 @@ const SearchView: React.FC<{
 
         return () => clearTimeout(delayDebounceFn);
     }, [query]);
+
+    // Cleanup audio on unmount
+    useEffect(() => {
+        return () => {
+            if (previewAudio) {
+                previewAudio.pause();
+                previewAudio.src = '';
+            }
+        };
+    }, [previewAudio]);
+
+    const handlePlayPreview = (song: Song) => {
+        if (!song.sourceId) return;
+
+        // If clicking the same song that is currently playing, pause it
+        if (previewingSongId === song.id && previewAudio) {
+            previewAudio.pause();
+            setPreviewingSongId(null);
+            return;
+        }
+
+        // Stop any currently playing audio
+        if (previewAudio) {
+            previewAudio.pause();
+        }
+
+        // Create new audio element
+        const audio = new Audio(`https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`);
+        audio.play().catch(e => console.error("Error playing preview:", e));
+
+        // Listen for end to reset state
+        audio.onended = () => {
+            setPreviewingSongId(null);
+        };
+
+        setPreviewAudio(audio);
+        setPreviewingSongId(song.id);
+    };
 
     // Simulating aggregation
     const localResults = searchSongs(query);
@@ -492,7 +535,13 @@ const SearchView: React.FC<{
                         <>
                             {isSearching && <div className="text-center text-gray-500 py-4">Searching...</div>}
                             {results.map(song => (
-                                <SongItem key={song.id} song={song} onAdd={() => onAddSong(song)} />
+                                <SongItem
+                                    key={song.id}
+                                    song={song}
+                                    onAdd={() => onAddSong(song)}
+                                    isPlaying={previewingSongId === song.id}
+                                    onPlay={() => handlePlayPreview(song)}
+                                />
                             ))}
                             {results.length === 0 && !isSearching && (
                                 <div className="text-center text-gray-500 py-4">No results found.</div>
@@ -504,7 +553,14 @@ const SearchView: React.FC<{
                                 <h3 className="text-lg font-bold">Live Queue</h3>
                             </div>
                             {session?.queue.map((song, idx) => (
-                                <SongItem key={idx} song={song} isQueue onVote={() => {}} />
+                                <SongItem
+                                    key={idx}
+                                    song={song}
+                                    isQueue
+                                    onVote={() => {}}
+                                    isPlaying={previewingSongId === song.id}
+                                    onPlay={() => handlePlayPreview(song)}
+                                />
                             ))}
                             {(!session?.queue || session.queue.length === 0) && (
                                 <div className="text-center py-8 text-gray-500 text-sm bg-zinc-900/50 rounded-xl border border-dashed border-zinc-800">

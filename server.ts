@@ -36,11 +36,12 @@ async function startServer() {
 
       const results = data.data.map((track: any) => ({
         id: track.id,
+        sourceId: track.id,
         title: track.title,
         artist: track.user.name,
         coverUrl: track.artwork?.['150x150'] || track.artwork?.['480x480'] || 'https://picsum.photos/150/150',
         duration: track.duration,
-        platform: 'AUDIUS'
+        platform: 'Audius'
       }));
 
       res.json(results);

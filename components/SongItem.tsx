@@ -1,15 +1,17 @@
 import React from 'react';
 import { Song } from '../types';
-import { Plus, ArrowUp, Check, X, Smartphone, Cloud, Music } from 'lucide-react';
+import { Plus, ArrowUp, Check, X, Smartphone, Cloud, Music, Play, Pause } from 'lucide-react';
 
 interface SongItemProps {
   song: Song;
   isQueue?: boolean;
   isApproval?: boolean; // New prop for Approval Queue
+  isPlaying?: boolean; // New prop for playing state
   onAdd?: () => void;
   onVote?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onPlay?: () => void; // Callback to play the song
 }
 
 const SourceIcon = ({ source }: { source: Song['source'] }) => {
@@ -27,21 +29,39 @@ export const SongItem: React.FC<SongItemProps> = ({
   song, 
   isQueue = false, 
   isApproval = false,
+  isPlaying = false,
   onAdd, 
   onVote,
   onApprove,
-  onReject
+  onReject,
+  onPlay
 }) => {
   return (
     <div className="flex items-center justify-between p-3 mb-2 bg-brand-card rounded-xl hover:bg-zinc-900 transition-colors group border border-white/5">
       <div className="flex items-center gap-3 flex-1 overflow-hidden">
-        <div className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
-          <img src={song.coverUrl} alt={song.title} className="w-full h-full object-cover" />
-          <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/80 flex items-center justify-center border border-white/10">
+        <div
+          className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer group-hover:opacity-80 transition-opacity"
+          onClick={onPlay}
+        >
+          <img src={song.coverUrl} alt={song.title} className={`w-full h-full object-cover ${isPlaying ? 'opacity-50' : ''}`} />
+          {/* Play/Pause Overlay */}
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            {isPlaying ? <Pause size={20} className="text-white" fill="currentColor" /> : <Play size={20} className="text-white" fill="currentColor" />}
+          </div>
+          {isPlaying && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center group-hover:hidden">
+                <div className="flex gap-1">
+                    <div className="w-1 h-3 bg-brand-red rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1 h-4 bg-brand-red rounded-full animate-bounce" style={{ animationDelay: '100ms' }} />
+                    <div className="w-1 h-3 bg-brand-red rounded-full animate-bounce" style={{ animationDelay: '200ms' }} />
+                </div>
+            </div>
+          )}
+          <div className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-black/80 flex items-center justify-center border border-white/10 z-10">
              <SourceIcon source={song.source} />
           </div>
         </div>
-        <div className="flex flex-col min-w-0 text-left">
+        <div className="flex flex-col min-w-0 text-left cursor-pointer" onClick={onPlay}>
           <h4 className="text-white font-medium truncate text-sm">{song.title}</h4>
           <div className="flex items-center gap-2">
             <p className="text-gray-400 text-xs truncate">{song.artist}</p>
