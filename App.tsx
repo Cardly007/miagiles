@@ -8,11 +8,12 @@ import { Header } from './components/Header';
 import { Navigation } from './components/Navigation';
 import { SongItem } from './components/SongItem';
 import { CarView } from './components/CarView';
+import { MiniPlayer } from './components/MiniPlayer';
 import { 
   Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, 
   Share2, Search, Mic, ArrowRight,
   Radio, Users, Heart, Settings, Plus, Upload, Car,
-  Music, UserPlus, CheckCircle, Smartphone, Wifi, X, Cloud
+  Music, UserPlus, CheckCircle, Smartphone, Wifi, X, Cloud, Disc
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -170,17 +171,33 @@ const PlayerView: React.FC<{
     onOpenHostPanel: () => void,
     onApproveSong: (song: Song) => void,
     onRejectSong: (song: Song) => void,
-    onPlayTrack: (songId: string) => void
-}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack }) => {
-    const currentSong = session?.nowPlaying || MOCK_SONGS[0];
+    onPlayTrack: (songId: string) => void,
+    onPauseTrack: () => void,
+    onResumeTrack: () => void,
+    onSeekTrack: (time: number) => void,
+    onNextTrack: () => void,
+    onPrevTrack: () => void
+}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack, onPauseTrack, onResumeTrack, onSeekTrack, onNextTrack, onPrevTrack }) => {
+    const currentSong = session?.nowPlaying;
     const [progress, setProgress] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
     const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
     const [sourceNode, setSourceNode] = useState<AudioBufferSourceNode | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
 
     // Setup Audio Context & Sync
     useEffect(() => {
-        if (!session?.nowPlaying || !session.currentTrackStartTime) return;
+        if (!session?.nowPlaying || !session.currentTrackStartTime) {
+            if (sourceNode) {
+                sourceNode.stop();
+                setSourceNode(null);
+            }
+            setIsPlaying(false);
+            setProgress(0);
+            setCurrentTime(0);
+            return;
+        }
 
         let actx = audioContext;
         if (!actx) {
@@ -189,13 +206,11 @@ const PlayerView: React.FC<{
         }
 
         const playTrack = async () => {
-             if (!currentSong.sourceId) return;
+             if (!currentSong?.sourceId) return;
 
-             // 1. Fetch the stream from Audius (only supporting Audius for now in this implementation)
+             // 1. Fetch the stream from Audius
              let streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
 
-             // In a real app we would use fetch to get array buffer and decode it.
-             // Using HTMLAudioElement is easier for streams but AudioContext is needed for precise sync.
              try {
                 // If it's already playing, stop the old one
                 if (sourceNode) {
@@ -203,29 +218,31 @@ const PlayerView: React.FC<{
                     setSourceNode(null);
                 }
 
-                // Note: Fetching full audio buffer for sync. For long tracks, MediaElementAudioSourceNode might be better but it's harder to sync precisely.
-                // Assuming we are fetching a small track or we can accept the loading delay.
                 const response = await fetch(streamUrl);
                 const arrayBuffer = await response.arrayBuffer();
                 const audioBuffer = await actx!.decodeAudioData(arrayBuffer);
+                setDuration(audioBuffer.duration);
 
                 const source = actx!.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(actx!.destination);
 
                 // Calculate Sync
-                // Jam Sync: Calculate offset
                 const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
                 const now = Date.now();
-                // Offset in seconds
                 let offset = (now - serverStartTime) / 1000;
 
-                // If offset is negative, it means we joined before it started playing (unlikely here but possible)
                 if (offset < 0) offset = 0;
 
                 source.start(0, offset);
                 setSourceNode(source);
-                setIsPlaying(true);
+                setIsPlaying(session.isPaused !== true);
+
+                if (session.isPaused) {
+                    actx!.suspend();
+                } else if (actx!.state === 'suspended') {
+                    actx!.resume();
+                }
 
              } catch (error) {
                  console.error("Error playing audio for sync:", error);
@@ -239,27 +256,64 @@ const PlayerView: React.FC<{
                 sourceNode.stop();
             }
         };
-    // Re-run if a new track starts playing
-    }, [session?.nowPlaying?.id, session?.currentTrackStartTime]);
+    }, [session?.nowPlaying?.id, session?.currentTrackStartTime, session?.isPaused]);
 
+    // Progress updating
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isPlaying && session?.currentTrackStartTime && duration > 0) {
+            interval = setInterval(() => {
+                const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
+                let now = Date.now();
+
+                // If there's a pause time, we shouldn't advance, but we handle pause state by suspending context
+                let currentSec = (now - serverStartTime) / 1000;
+                if (currentSec > duration) {
+                    currentSec = duration;
+                    if (isHost && session.queue.length > 0) {
+                        onNextTrack();
+                    }
+                }
+
+                setCurrentTime(currentSec);
+                setProgress((currentSec / duration) * 100);
+            }, 100);
+        }
+        return () => clearInterval(interval);
+    }, [isPlaying, session?.currentTrackStartTime, duration, isHost, session?.queue]);
+
+    // Format time (e.g., 65 -> "1:05")
+    const formatTime = (time: number) => {
+        if (!time || isNaN(time)) return "0:00";
+        const minutes = Math.floor(time / 60);
+        const seconds = Math.floor(time % 60);
+        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    };
 
     const handlePlayPause = () => {
-        if (audioContext) {
-            if (audioContext.state === 'running') {
-                audioContext.suspend();
-                setIsPlaying(false);
-                return;
-            } else if (audioContext.state === 'suspended' && sourceNode) {
-                audioContext.resume();
-                setIsPlaying(true);
-                return;
+        if (!isHost) return; // Only host can play/pause for now
+
+        if (isPlaying) {
+            onPauseTrack();
+        } else {
+            if (audioContext && audioContext.state === 'suspended' && sourceNode) {
+                onResumeTrack();
+            } else if (session?.nowPlaying) {
+                // Not playing and no source node, restart track
+                onPlayTrack(session.nowPlaying.id);
             }
         }
+    };
 
-        // If no context or suspended but no source, emit play event to start it
-        if (isHost && session?.nowPlaying) {
-            onPlayTrack(session.nowPlaying.id);
-        }
+    const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isHost || !duration) return;
+
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percentage = Math.max(0, Math.min(1, x / rect.width));
+        const newTime = percentage * duration;
+
+        onSeekTrack(newTime);
     };
 
     return (
@@ -267,56 +321,64 @@ const PlayerView: React.FC<{
             <Header showSettings={isHost} onSettingsClick={onOpenHostPanel} />
             
             <div className="flex-1 overflow-y-auto no-scrollbar">
-                <div className="p-6 relative">
-                    <div className="absolute top-0 left-0 w-full h-[60%] bg-gradient-to-b from-brand-red/10 to-transparent pointer-events-none"></div>
+                {currentSong ? (
+                    <div className="p-6 relative">
+                        <div className="absolute top-0 left-0 w-full h-[60%] bg-gradient-to-b from-brand-red/10 to-transparent pointer-events-none"></div>
 
-                    {/* CD / Album Art */}
-                    <div className="relative aspect-square w-full max-w-[280px] mx-auto mb-8 mt-2 rounded-3xl overflow-hidden shadow-[0_20px_50px_-12px_rgba(220,38,38,0.3)] border border-white/10 group">
-                        <img src={currentSong.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
-                        <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-2 border border-white/10">
-                             {session?.settings.syncMode ? (
-                                <>
-                                    <Wifi size={12} className="text-brand-red animate-pulse" />
-                                    <span className="text-[10px] font-bold tracking-wider">SYNC ACTIVE</span>
-                                </>
-                             ) : (
-                                <>
-                                    <span className="w-2 h-2 rounded-full bg-brand-red animate-pulse"></span>
-                                    <span className="text-[10px] font-bold tracking-wider">LIVE</span>
-                                </>
-                             )}
+                        {/* CD / Album Art */}
+                        <div className="relative aspect-square w-full max-w-[280px] mx-auto mb-8 mt-2 rounded-3xl overflow-hidden shadow-[0_20px_50px_-12px_rgba(220,38,38,0.3)] border border-white/10 group">
+                            <img src={currentSong.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
+                            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full flex items-center gap-2 border border-white/10">
+                                {session?.settings.syncMode ? (
+                                    <>
+                                        <Wifi size={12} className="text-brand-red animate-pulse" />
+                                        <span className="text-[10px] font-bold tracking-wider">SYNC ACTIVE</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="w-2 h-2 rounded-full bg-brand-red animate-pulse"></span>
+                                        <span className="text-[10px] font-bold tracking-wider">LIVE</span>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mb-6 px-2 text-center">
+                            <h2 className="text-2xl font-bold text-white truncate mb-1">{currentSong.title}</h2>
+                            <p className="text-gray-400 text-lg truncate">{currentSong.artist}</p>
+                            <p className="text-xs text-brand-red mt-1 uppercase tracking-widest font-bold">{currentSong.source}</p>
+                        </div>
+
+                        <div className="mb-6 px-4">
+                            <div className="w-full h-3 bg-zinc-800 rounded-full mb-2 cursor-pointer relative overflow-hidden group" onClick={handleSeek}>
+                                <div className="absolute h-full bg-brand-red group-hover:bg-brand-red/80 rounded-full transition-all duration-100 ease-linear" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <div className="flex justify-between text-[10px] text-gray-500 font-mono">
+                                <span>{formatTime(currentTime)}</span>
+                                <span>{formatTime(duration)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-center gap-6 mb-8">
+                            <button className="text-gray-400 hover:text-white"><Shuffle size={20} /></button>
+                            <button className={`text-white hover:text-brand-red ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => isHost && onPrevTrack()}><SkipBack size={28} fill="currentColor" /></button>
+                            <button
+                                className={`w-14 h-14 rounded-full bg-brand-red text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                onClick={handlePlayPause}
+                            >
+                                {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
+                            </button>
+                            <button className={`text-white hover:text-brand-red ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`} onClick={() => isHost && onNextTrack()}><SkipForward size={28} fill="currentColor" /></button>
+                            <button className="text-gray-400 hover:text-white"><Repeat size={20} /></button>
                         </div>
                     </div>
-
-                    <div className="mb-6 px-2 text-center">
-                        <h2 className="text-2xl font-bold text-white truncate mb-1">{currentSong.title}</h2>
-                        <p className="text-gray-400 text-lg truncate">{currentSong.artist}</p>
-                        <p className="text-xs text-brand-red mt-1 uppercase tracking-widest font-bold">{currentSong.source}</p>
+                ) : (
+                    <div className="p-6 relative text-center py-20 text-gray-500">
+                        <Disc size={64} className="mx-auto mb-4 opacity-20" />
+                        <h2 className="text-xl font-bold text-white mb-2">No track playing</h2>
+                        <p className="text-sm">Search and add tracks to the queue to start jamming!</p>
                     </div>
-
-                    <div className="mb-6 px-4">
-                        <div className="w-full h-1 bg-zinc-800 rounded-full mb-2 cursor-pointer relative">
-                            <div className="absolute h-full bg-white rounded-full" style={{ width: `${progress}%` }}></div>
-                        </div>
-                        <div className="flex justify-between text-[10px] text-gray-500 font-mono">
-                            <span>1:20</span>
-                            <span>{currentSong.duration}</span>
-                        </div>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-6 mb-8">
-                        <button className="text-gray-400 hover:text-white"><Shuffle size={20} /></button>
-                        <button className="text-white hover:text-brand-red"><SkipBack size={28} fill="currentColor" /></button>
-                        <button
-                            className="w-14 h-14 rounded-full bg-brand-red text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
-                            onClick={handlePlayPause}
-                        >
-                            {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
-                        </button>
-                        <button className="text-white hover:text-brand-red"><SkipForward size={28} fill="currentColor" /></button>
-                        <button className="text-gray-400 hover:text-white"><Repeat size={20} /></button>
-                    </div>
-                </div>
+                )}
 
                 <div className="px-6 pb-6 space-y-6">
                     {/* Approval Queue (Host Only) */}
@@ -732,11 +794,14 @@ const App: React.FC = () => {
     newSocket.on('track-playing', ({ trackId, startTime }) => {
         setSession(prev => {
             if (!prev) return null;
-            const track = prev.queue.find(t => t.id === trackId);
+            const track = prev.queue.find(t => t.id === trackId) || prev.nowPlaying;
+            const queue = prev.queue.filter(t => t.id !== trackId);
             return {
                 ...prev,
-                nowPlaying: track || prev.nowPlaying,
-                currentTrackStartTime: startTime
+                nowPlaying: track,
+                queue: queue,
+                currentTrackStartTime: startTime,
+                isPaused: false
             };
         });
     });
@@ -765,7 +830,27 @@ const App: React.FC = () => {
         // Sync session from DB including currentTrackStartTime
         setSession(prev => prev ? {
             ...prev,
-            currentTrackStartTime: session.currentTrackStartTime
+            currentTrackStartTime: session.currentTrackStartTime,
+            isPaused: session.isPaused
+        } : null);
+    });
+
+    newSocket.on('track-paused', () => {
+        setSession(prev => prev ? { ...prev, isPaused: true } : null);
+    });
+
+    newSocket.on('track-resumed', ({ startTime }) => {
+        setSession(prev => prev ? {
+            ...prev,
+            isPaused: false,
+            currentTrackStartTime: startTime
+        } : null);
+    });
+
+    newSocket.on('track-seeked', ({ startTime }) => {
+        setSession(prev => prev ? {
+            ...prev,
+            currentTrackStartTime: startTime
         } : null);
     });
 
@@ -958,6 +1043,38 @@ const App: React.FC = () => {
       }
   };
 
+  const handlePauseTrack = () => {
+      if (socket && session) {
+          socket.emit('pause-track', { sessionId: session.id });
+      }
+  };
+
+  const handleResumeTrack = () => {
+      if (socket && session) {
+          socket.emit('resume-track', { sessionId: session.id });
+      }
+  };
+
+  const handleSeekTrack = (time: number) => {
+      if (socket && session) {
+          socket.emit('seek-track', { sessionId: session.id, time });
+      }
+  };
+
+  const handleNextTrack = () => {
+      if (socket && session && session.queue.length > 0) {
+          const nextTrack = session.queue[0];
+          socket.emit('play-track', { trackId: nextTrack.id, sessionId: session.id });
+      }
+  };
+
+  const handlePrevTrack = () => {
+      // In a real app we'd pop from history, but here we can just restart current or go to first in queue
+      if (socket && session && session.nowPlaying) {
+          socket.emit('play-track', { trackId: session.nowPlaying.id, sessionId: session.id });
+      }
+  };
+
   const handleUpdateSetting = (key: keyof JamSession['settings'], val: boolean) => {
       setSession(prev => prev ? {
           ...prev,
@@ -998,6 +1115,11 @@ const App: React.FC = () => {
             onApproveSong={handleApproveSong}
             onRejectSong={handleRejectSong}
             onPlayTrack={handlePlayTrack}
+            onPauseTrack={handlePauseTrack}
+            onResumeTrack={handleResumeTrack}
+            onSeekTrack={handleSeekTrack}
+            onNextTrack={handleNextTrack}
+            onPrevTrack={handlePrevTrack}
         />;
       case ViewState.GUEST_JOIN:
       case ViewState.HOME:
@@ -1020,6 +1142,9 @@ const App: React.FC = () => {
     }
   };
 
+  const isHost = user?.isHost || false;
+  const showMiniPlayer = session?.nowPlaying && view !== ViewState.PLAYER && view !== ViewState.HOST_PANEL && view !== ViewState.CAR_MODE && view !== ViewState.LANDING && view !== ViewState.AUTH;
+
   return (
     <div className="bg-black text-white min-h-screen font-sans selection:bg-brand-red selection:text-white">
       {renderView()}
@@ -1031,6 +1156,29 @@ const App: React.FC = () => {
             onClose={() => setShowHostPanel(false)} 
             onUpdateSetting={handleUpdateSetting}
             onBanUser={handleBanUser}
+          />
+      )}
+
+      {showMiniPlayer && session.nowPlaying && (
+          <MiniPlayer
+             currentSong={session.nowPlaying}
+             isPlaying={session.isPaused !== true}
+             isHost={isHost}
+             onPlayPause={(e) => {
+                 e.stopPropagation();
+                 if (!isHost) return;
+                 if (session.isPaused !== true) {
+                     handlePauseTrack();
+                 } else {
+                     handleResumeTrack();
+                 }
+             }}
+             onNext={(e) => {
+                 e.stopPropagation();
+                 if (!isHost) return;
+                 handleNextTrack();
+             }}
+             onClick={() => setView(ViewState.PLAYER)}
           />
       )}
 

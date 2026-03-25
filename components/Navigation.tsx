@@ -15,7 +15,7 @@ export const Navigation: React.FC<NavigationProps> = ({ currentView, onChangeVie
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-brand-dark border-t border-white/10 px-6 py-3 pb-6 md:pb-3 z-30">
+    <div className="fixed bottom-0 left-0 right-0 bg-brand-dark border-t border-white/10 px-6 py-3 pb-6 md:pb-3 z-30 bg-black">
       <div className="flex items-center justify-between max-w-lg mx-auto">
         {navItems.map((item) => {
            const isActive = currentView.includes(item.id) || (item.id === 'HOME' && currentView === 'HOST_PANEL');

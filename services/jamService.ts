@@ -8,8 +8,8 @@ export const createJam = (hostId: string): JamSession => {
     hostId,
     isActive: true,
     code: '8821',
-    nowPlaying: MOCK_SONGS[0],
-    queue: MOCK_SONGS.slice(1),
+    nowPlaying: undefined,
+    queue: [],
     approvalQueue: [],
     history: [],
     connectedUsers: [],
@@ -25,7 +25,7 @@ export const createJam = (hostId: string): JamSession => {
 };
 
 export const searchSongs = (query: string): Song[] => {
-  if (!query) return MOCK_SONGS;
+  if (!query) return [];
   const lowerQuery = query.toLowerCase();
   return MOCK_SONGS.filter(s => 
     s.title.toLowerCase().includes(lowerQuery) || 
