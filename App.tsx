@@ -423,7 +423,13 @@ const PlayerView: React.FC<{
                         
                         <div className="space-y-1">
                             {session?.queue.map((song, idx) => (
-                                <SongItem key={idx} song={song} isQueue onVote={() => {}} />
+                                <SongItem
+                                    key={idx}
+                                    song={song}
+                                    isQueue
+                                    onVote={() => {}}
+                                    onPlay={isHost ? () => onPlayTrack(song.id) : undefined}
+                                />
                             ))}
                             {(!session?.queue || session.queue.length === 0) && (
                                 <div className="text-center py-8 text-gray-500 text-sm bg-zinc-900/50 rounded-xl border border-dashed border-zinc-800">
@@ -741,7 +747,15 @@ const ProfileView: React.FC<{ user: User, onLogout: () => void, onChangeView: (v
                         <Car size={18} /> Switch to Car Mode
                      </Button>
 
-                     <Button variant="ghost" fullWidth onClick={onLogout} className="text-red-500 hover:bg-red-950/30">
+                     <Button
+                        variant="ghost"
+                        fullWidth
+                        onClick={() => {
+                            localStorage.removeItem('onlyjam_userId');
+                            onLogout();
+                        }}
+                        className="text-red-500 hover:bg-red-950/30"
+                     >
                         Log Out
                      </Button>
                  </div>
@@ -790,6 +804,11 @@ const App: React.FC = () => {
                 updatedState = {
                     ...prev,
                     approvalQueue: [...prev.approvalQueue, track]
+                };
+            } else if (track.status === 'PLAYING') {
+                updatedState = {
+                    ...prev,
+                    nowPlaying: track
                 };
             } else {
                 updatedState = {
@@ -894,6 +913,32 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Auto-login check
+  useEffect(() => {
+      const savedUserId = localStorage.getItem('onlyjam_userId');
+      if (savedUserId) {
+          // Verify user exists and load profile
+          fetch(`/api/users/${savedUserId}`)
+            .then(res => {
+                if (res.ok) return res.json();
+                throw new Error('User not found');
+            })
+            .then(dbUser => {
+                const loadedUser = {
+                    ...MOCK_USER,
+                    ...dbUser,
+                    name: dbUser.pseudo,
+                    isHost: false
+                };
+                setUser(loadedUser as User);
+                setView(ViewState.HOME);
+            })
+            .catch(() => {
+                localStorage.removeItem('onlyjam_userId');
+            });
+      }
+  }, []);
+
   // Initialize simulated session for host flow
   const handleOnboardingComplete = async (data: Partial<User>) => {
       try {
@@ -909,6 +954,7 @@ const App: React.FC = () => {
               name: dbUser.pseudo, // Map to frontend prop
               isHost: false
           };
+          localStorage.setItem('onlyjam_userId', dbUser.id);
           setUser(newUser as User);
           setView(ViewState.HOME); // Move to selection screen / home
       } catch (error) {

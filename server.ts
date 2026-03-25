@@ -69,6 +69,22 @@ async function startServer() {
     }
   });
 
+  // Get user by ID for persistent login
+  app.get('/api/users/:id', async (req, res) => {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: req.params.id }
+      });
+      if (user) {
+        res.json(user);
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch user' });
+    }
+  });
+
   // WebSockets for Live Queue
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
@@ -130,16 +146,13 @@ async function startServer() {
           }
         });
 
-        // Broadcast the new track
-        io.to(sessionId).emit('track-added', {
-          ...track,
-          id: newTrack.id, // Replace frontend ID with DB ID
-          sourceId: track.sourceId.toString(), // Keep original Audius ID for stream
-          status: status,
-          tempId: track.id // Send back tempId so frontend can replace it
-        });
-
         if (autoPlay && status === 'QUEUED') {
+            status = 'PLAYING';
+            await prisma.track.update({
+               where: { id: newTrack.id },
+               data: { status: 'PLAYING' }
+            });
+
             const startTime = new Date();
             await prisma.jamSession.update({
                where: { id: sessionId },
@@ -148,12 +161,28 @@ async function startServer() {
                    isPaused: false
                }
             });
-            await prisma.track.update({
-               where: { id: newTrack.id },
-               data: { status: 'PLAYING' }
+
+            // If autoplaying, tell clients it was added as playing directly
+            io.to(sessionId).emit('track-added', {
+              ...track,
+              id: newTrack.id,
+              sourceId: track.sourceId.toString(),
+              status: status,
+              tempId: track.id
             });
+
             io.to(sessionId).emit('track-playing', { trackId: newTrack.id, startTime: startTime.toISOString() });
+        } else {
+            // Broadcast the new track normally
+            io.to(sessionId).emit('track-added', {
+              ...track,
+              id: newTrack.id, // Replace frontend ID with DB ID
+              sourceId: track.sourceId.toString(), // Keep original Audius ID for stream
+              status: status,
+              tempId: track.id // Send back tempId so frontend can replace it
+            });
         }
+
       } catch (error) {
         console.error('Error adding track:', error);
       }
