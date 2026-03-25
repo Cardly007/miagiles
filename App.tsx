@@ -9,6 +9,7 @@ import { Navigation } from './components/Navigation';
 import { SongItem } from './components/SongItem';
 import { CarView } from './components/CarView';
 import { MiniPlayer } from './components/MiniPlayer';
+import { HomeDashboard } from './components/HomeDashboard';
 import { 
   Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, 
   Share2, Search, Mic, ArrowRight,
@@ -259,6 +260,13 @@ const PlayerView: React.FC<{
     }, [session?.nowPlaying?.id, session?.currentTrackStartTime, session?.isPaused]);
 
     // Progress updating
+    const hasTriggeredNextRef = React.useRef(false);
+
+    useEffect(() => {
+        // Reset ref when a new track starts
+        hasTriggeredNextRef.current = false;
+    }, [session?.nowPlaying?.id]);
+
     useEffect(() => {
         let interval: NodeJS.Timeout;
         if (isPlaying && session?.currentTrackStartTime && duration > 0) {
@@ -266,11 +274,13 @@ const PlayerView: React.FC<{
                 const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
                 let now = Date.now();
 
-                // If there's a pause time, we shouldn't advance, but we handle pause state by suspending context
                 let currentSec = (now - serverStartTime) / 1000;
+
+                // Track ends
                 if (currentSec > duration) {
                     currentSec = duration;
-                    if (isHost && session.queue.length > 0) {
+                    if (isHost && !hasTriggeredNextRef.current) {
+                        hasTriggeredNextRef.current = true;
                         onNextTrack();
                     }
                 }
@@ -768,26 +778,28 @@ const App: React.FC = () => {
         };
 
         const existingInQueue = updateQueue(prev.queue);
-        if (existingInQueue) {
-            return { ...prev, queue: existingInQueue };
-        }
+        let updatedState = { ...prev };
 
-        const existingInApproval = updateQueue(prev.approvalQueue);
-        if (existingInApproval) {
-            return { ...prev, approvalQueue: existingInApproval };
+        if (existingInQueue) {
+            updatedState = { ...prev, queue: existingInQueue };
+        } else {
+            const existingInApproval = updateQueue(prev.approvalQueue);
+            if (existingInApproval) {
+                updatedState = { ...prev, approvalQueue: existingInApproval };
+            } else if (track.status === 'PENDING') {
+                updatedState = {
+                    ...prev,
+                    approvalQueue: [...prev.approvalQueue, track]
+                };
+            } else {
+                updatedState = {
+                    ...prev,
+                    queue: [...prev.queue, track]
+                };
+            }
         }
         
-        // It's a truly new track from someone else
-        if (track.status === 'PENDING') {
-            return {
-                ...prev,
-                approvalQueue: [...prev.approvalQueue, track]
-            };
-        }
-        return {
-            ...prev,
-            queue: [...prev.queue, track]
-        };
+        return updatedState;
       });
     });
 
@@ -898,7 +910,7 @@ const App: React.FC = () => {
               isHost: false
           };
           setUser(newUser as User);
-          setView(ViewState.AUTH); // Move to selection screen
+          setView(ViewState.HOME); // Move to selection screen / home
       } catch (error) {
           console.error("Failed to create user", error);
       }
@@ -969,12 +981,15 @@ const App: React.FC = () => {
       const tempId = Math.random().toString();
       const newSong = { ...song, addedBy: user.id, votes: 1, sourceId: song.id, id: tempId };
       
+      const isAutoPlay = user.isHost && !session.nowPlaying && session.queue.length === 0 && !session.settings.approvalRequired;
+
       if (socket) {
         socket.emit('add-track', {
             sessionId: session.id,
             track: newSong,
             userId: user.id,
-            isHost: user.isHost
+            isHost: user.isHost,
+            autoPlay: isAutoPlay // tell server to autoplay this
         });
       }
 
@@ -987,13 +1002,13 @@ const App: React.FC = () => {
                   approvalQueue: [...prev.approvalQueue, { ...newSong, status: 'PENDING' }]
               };
           }
-          // Else -> main queue
+
           return {
               ...prev,
               queue: [...prev.queue, { ...newSong, status: 'QUEUED' }]
           };
       });
-      
+
       // Navigate back to player to see feedback (only for host)
       if (user.isHost && view !== ViewState.PLAYER) setView(ViewState.PLAYER);
   };
@@ -1106,6 +1121,13 @@ const App: React.FC = () => {
                  </div>
             </div>
         );
+      case ViewState.HOME:
+          return <HomeDashboard
+              user={user}
+              onStartSession={startSession}
+              onJoinSession={joinSession}
+              onChangeView={setView}
+          />;
       case ViewState.PLAYER:
       case ViewState.HOST_PANEL:
         return <PlayerView 
@@ -1122,7 +1144,7 @@ const App: React.FC = () => {
             onPrevTrack={handlePrevTrack}
         />;
       case ViewState.GUEST_JOIN:
-      case ViewState.HOME:
+      case ViewState.SEARCH:
         return <SearchView 
             onAddSong={handleAddSong} 
             isApprovalMode={session?.settings.approvalRequired && !user?.isHost || false}
@@ -1143,7 +1165,7 @@ const App: React.FC = () => {
   };
 
   const isHost = user?.isHost || false;
-  const showMiniPlayer = session?.nowPlaying && view !== ViewState.PLAYER && view !== ViewState.HOST_PANEL && view !== ViewState.CAR_MODE && view !== ViewState.LANDING && view !== ViewState.AUTH;
+  const showMiniPlayer = session?.nowPlaying && view !== ViewState.PLAYER && view !== ViewState.HOST_PANEL && view !== ViewState.CAR_MODE && view !== ViewState.LANDING && view !== ViewState.AUTH && view !== ViewState.GUEST_JOIN;
 
   return (
     <div className="bg-black text-white min-h-screen font-sans selection:bg-brand-red selection:text-white">

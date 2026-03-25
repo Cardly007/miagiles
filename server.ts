@@ -105,7 +105,7 @@ async function startServer() {
     });
 
     socket.on('add-track', async (data) => {
-      const { sessionId, track, userId, isHost } = data;
+      const { sessionId, track, userId, isHost, autoPlay } = data;
 
       try {
         const session = await prisma.jamSession.findUnique({ where: { id: sessionId } });
@@ -138,6 +138,22 @@ async function startServer() {
           status: status,
           tempId: track.id // Send back tempId so frontend can replace it
         });
+
+        if (autoPlay && status === 'QUEUED') {
+            const startTime = new Date();
+            await prisma.jamSession.update({
+               where: { id: sessionId },
+               data: {
+                   currentTrackStartTime: startTime,
+                   isPaused: false
+               }
+            });
+            await prisma.track.update({
+               where: { id: newTrack.id },
+               data: { status: 'PLAYING' }
+            });
+            io.to(sessionId).emit('track-playing', { trackId: newTrack.id, startTime: startTime.toISOString() });
+        }
       } catch (error) {
         console.error('Error adding track:', error);
       }
