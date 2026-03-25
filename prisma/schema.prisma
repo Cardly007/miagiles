@@ -18,6 +18,7 @@ model User {
   // Relations
   ownedJams     JamSession[] @relation("HostRelation")
   tracksAdded   Track[]      @relation("UserTracks")
+  bannedFrom    BannedUser[] @relation("UserBans")
 }
 
 // 2. Gestion de la Session de Jam
@@ -31,11 +32,26 @@ model JamSession {
   votingEnabled Boolean   @default(true)  // [cite: 31, 100]
   guestUploads  Boolean   @default(false) // [cite: 33, 106]
   explicitFilter Boolean  @default(false) // [cite: 35]
+  approvalRequired Boolean @default(false)
+  currentTrackStartTime DateTime? // Time the track started for sync
   
   // Relations
   hostId        String
   host          User      @relation("HostRelation", fields: [hostId], references: [id])
   queue         Track[]   @relation("SessionQueue")
+  bannedUsers   BannedUser[] @relation("SessionBans")
+}
+
+// 4. Banned Users
+model BannedUser {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation("UserBans", fields: [userId], references: [id])
+  sessionId     String
+  session       JamSession @relation("SessionBans", fields: [sessionId], references: [id])
+  bannedAt      DateTime  @default(now())
+
+  @@unique([userId, sessionId])
 }
 
 // 3. File d'attente (Live Queue)
@@ -65,4 +81,5 @@ enum TrackStatus {
   PLAYING  // "NOW PLAYING" [cite: 57, 89]
   QUEUED   // "Next up in the mix" [cite: 60, 91]
   PLAYED
+  PENDING  // "Suggestion Mode" pending approval
 }

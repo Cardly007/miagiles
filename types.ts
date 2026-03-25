@@ -11,13 +11,15 @@ export interface User {
 
 export interface Song {
   id: string;
+  sourceId?: string; // Original ID from source (e.g. Audius track ID)
   title: string;
   artist: string;
   coverUrl: string;
-  source: 'Spotify' | 'YouTube' | 'SoundCloud' | 'AppleMusic' | 'Local';
+  source: 'Spotify' | 'YouTube' | 'SoundCloud' | 'AppleMusic' | 'Local' | 'Audius';
   votes: number;
   addedBy: string;
-  duration: string;
+  duration: string | number;
+  status?: 'QUEUED' | 'PENDING' | 'PLAYING' | 'PLAYED';
 }
 
 export interface JamSession {
@@ -34,10 +36,11 @@ export interface JamSession {
     votingEnabled: boolean;
     guestUploads: boolean;
     explicitFilter: boolean;
-    requireApproval: boolean; // "Mode Suggestion"
+    approvalRequired: boolean; // "Mode Suggestion"
     guestVolumeControl: boolean;
     syncMode: boolean; // "Jam Sync"
   };
+  currentTrackStartTime?: string; // Added for Sync
 }
 
 export enum ViewState {

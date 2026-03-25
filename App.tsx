@@ -81,8 +81,9 @@ const Onboarding: React.FC<{ onComplete: (user: Partial<User>) => void }> = ({ o
 const HostPanel: React.FC<{ 
     session: JamSession, 
     onClose: () => void,
-    onUpdateSetting: (key: keyof JamSession['settings'], val: boolean) => void 
-}> = ({ session, onClose, onUpdateSetting }) => {
+    onUpdateSetting: (key: keyof JamSession['settings'], val: boolean) => void,
+    onBanUser: (userId: string) => void
+}> = ({ session, onClose, onUpdateSetting, onBanUser }) => {
     return (
         <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 animate-fade-in overflow-y-auto">
             <div className="bg-zinc-900 w-full max-w-sm rounded-3xl p-6 border border-white/10 relative shadow-2xl my-auto">
@@ -109,7 +110,7 @@ const HostPanel: React.FC<{
                     <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-2">Controls</h3>
                     
                     {[
-                        { key: 'requireApproval', label: 'Suggestion Mode', desc: 'Approve songs before they play', icon: CheckCircle },
+                        { key: 'approvalRequired', label: 'Suggestion Mode', desc: 'Approve songs before they play', icon: CheckCircle },
                         { key: 'syncMode', label: 'Jam Sync', desc: 'Sync playback across devices (<10ms)', icon: Wifi },
                         { key: 'guestVolumeControl', label: 'Guest Volume', desc: 'Allow guests to change volume', icon: Music },
                     ].map((setting: any) => (
@@ -134,16 +135,28 @@ const HostPanel: React.FC<{
                 </div>
 
                 <div className="mt-6">
-                     <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-3">Connected Users (12)</h3>
-                     <div className="flex -space-x-2 overflow-hidden mb-4">
-                        {[1,2,3,4,5].map(i => (
-                            <img key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-black" src={`https://picsum.photos/100/100?random=${i}`} alt=""/>
+                     <h3 className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-3">Connected Users</h3>
+                     <div className="space-y-2 mb-4 max-h-40 overflow-y-auto pr-2 no-scrollbar">
+                        {session.connectedUsers.map(u => (
+                             <div key={u.id} className="flex items-center justify-between p-2 rounded-lg bg-zinc-950 border border-zinc-800">
+                                <div className="flex items-center gap-3">
+                                     <img src={u.avatar} className="w-8 h-8 rounded-full object-cover" />
+                                     <div>
+                                         <p className="text-xs font-bold text-white">{u.name}</p>
+                                         <p className="text-[10px] text-gray-500">{u.isHost ? 'Host' : 'Guest'}</p>
+                                     </div>
+                                </div>
+                                {!u.isHost && (
+                                    <button
+                                        onClick={() => onBanUser(u.id)}
+                                        className="text-xs text-red-500 px-2 py-1 bg-red-500/10 rounded font-bold hover:bg-red-500/20"
+                                    >
+                                        Ban
+                                    </button>
+                                )}
+                             </div>
                         ))}
-                        <div className="h-8 w-8 rounded-full bg-zinc-800 ring-2 ring-black flex items-center justify-center text-xs text-gray-400 font-bold">+7</div>
                      </div>
-                     <Button variant="ghost" fullWidth className="text-red-500 text-sm h-10 border-red-500/20">
-                        Kick User
-                     </Button>
                 </div>
             </div>
         </div>
@@ -156,10 +169,98 @@ const PlayerView: React.FC<{
     isHost: boolean,
     onOpenHostPanel: () => void,
     onApproveSong: (song: Song) => void,
-    onRejectSong: (song: Song) => void
-}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong }) => {
+    onRejectSong: (song: Song) => void,
+    onPlayTrack: (songId: string) => void
+}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack }) => {
     const currentSong = session?.nowPlaying || MOCK_SONGS[0];
-    const [progress, setProgress] = useState(30);
+    const [progress, setProgress] = useState(0);
+    const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+    const [sourceNode, setSourceNode] = useState<AudioBufferSourceNode | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+
+    // Setup Audio Context & Sync
+    useEffect(() => {
+        if (!session?.nowPlaying || !session.currentTrackStartTime) return;
+
+        let actx = audioContext;
+        if (!actx) {
+            actx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            setAudioContext(actx);
+        }
+
+        const playTrack = async () => {
+             if (!currentSong.sourceId) return;
+
+             // 1. Fetch the stream from Audius (only supporting Audius for now in this implementation)
+             let streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
+
+             // In a real app we would use fetch to get array buffer and decode it.
+             // Using HTMLAudioElement is easier for streams but AudioContext is needed for precise sync.
+             try {
+                // If it's already playing, stop the old one
+                if (sourceNode) {
+                    sourceNode.stop();
+                    setSourceNode(null);
+                }
+
+                // Note: Fetching full audio buffer for sync. For long tracks, MediaElementAudioSourceNode might be better but it's harder to sync precisely.
+                // Assuming we are fetching a small track or we can accept the loading delay.
+                const response = await fetch(streamUrl);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await actx!.decodeAudioData(arrayBuffer);
+
+                const source = actx!.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(actx!.destination);
+
+                // Calculate Sync
+                // Jam Sync: Calculate offset
+                const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
+                const now = Date.now();
+                // Offset in seconds
+                let offset = (now - serverStartTime) / 1000;
+
+                // If offset is negative, it means we joined before it started playing (unlikely here but possible)
+                if (offset < 0) offset = 0;
+
+                source.start(0, offset);
+                setSourceNode(source);
+                setIsPlaying(true);
+
+             } catch (error) {
+                 console.error("Error playing audio for sync:", error);
+             }
+        };
+
+        playTrack();
+
+        return () => {
+            if (sourceNode) {
+                sourceNode.stop();
+            }
+        };
+    // Re-run if a new track starts playing
+    }, [session?.nowPlaying?.id, session?.currentTrackStartTime]);
+
+
+    const handlePlayPause = () => {
+        if (audioContext) {
+            if (audioContext.state === 'running') {
+                audioContext.suspend();
+                setIsPlaying(false);
+                return;
+            } else if (audioContext.state === 'suspended' && sourceNode) {
+                audioContext.resume();
+                setIsPlaying(true);
+                return;
+            }
+        }
+
+        // If no context or suspended but no source, emit play event to start it
+        if (isHost && session?.nowPlaying) {
+            onPlayTrack(session.nowPlaying.id);
+        }
+    };
 
     return (
         <div className="flex flex-col h-full bg-black pb-24">
@@ -206,8 +307,11 @@ const PlayerView: React.FC<{
                     <div className="flex items-center justify-center gap-6 mb-8">
                         <button className="text-gray-400 hover:text-white"><Shuffle size={20} /></button>
                         <button className="text-white hover:text-brand-red"><SkipBack size={28} fill="currentColor" /></button>
-                        <button className="w-14 h-14 rounded-full bg-brand-red text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform">
-                            <Pause size={28} fill="currentColor" />
+                        <button
+                            className="w-14 h-14 rounded-full bg-brand-red text-white flex items-center justify-center shadow-lg hover:scale-105 transition-transform"
+                            onClick={handlePlayPause}
+                        >
+                            {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
                         </button>
                         <button className="text-white hover:text-brand-red"><SkipForward size={28} fill="currentColor" /></button>
                         <button className="text-gray-400 hover:text-white"><Repeat size={20} /></button>
@@ -216,7 +320,7 @@ const PlayerView: React.FC<{
 
                 <div className="px-6 pb-6 space-y-6">
                     {/* Approval Queue (Host Only) */}
-                    {isHost && session?.settings.requireApproval && session?.approvalQueue.length > 0 && (
+                    {isHost && session?.settings.approvalRequired && session?.approvalQueue.length > 0 && (
                         <div className="animate-fade-in">
                              <div className="flex items-center justify-between mb-3">
                                 <h3 className="text-sm font-bold text-brand-red uppercase tracking-wider">Needs Approval</h3>
@@ -531,15 +635,32 @@ const App: React.FC = () => {
     const newSocket = io();
     setSocket(newSocket);
 
-    newSocket.on('track-added', (track: Song) => {
+    newSocket.on('track-added', (track: any) => {
       setSession(prev => {
         if (!prev) return null;
-        // Avoid duplicates if we added it
-        if (prev.queue.find(t => t.id === track.id) || prev.approvalQueue.find(t => t.id === track.id)) {
-          return prev;
+        // Avoid duplicates if we added it locally, but update the temp ID to DB ID
+        const updateQueue = (queue: Song[]) => {
+           const existingIdx = queue.findIndex(t => t.id === track.tempId || t.id === track.id || t.sourceId === track.sourceId);
+           if (existingIdx !== -1) {
+               const newQueue = [...queue];
+               newQueue[existingIdx] = { ...newQueue[existingIdx], id: track.id };
+               return newQueue;
+           }
+           return null;
+        };
+
+        const existingInQueue = updateQueue(prev.queue);
+        if (existingInQueue) {
+            return { ...prev, queue: existingInQueue };
+        }
+
+        const existingInApproval = updateQueue(prev.approvalQueue);
+        if (existingInApproval) {
+            return { ...prev, approvalQueue: existingInApproval };
         }
         
-        if (prev.settings.requireApproval && track.addedBy !== prev.hostId) {
+        // It's a truly new track from someone else
+        if (track.status === 'PENDING') {
             return {
                 ...prev,
                 approvalQueue: [...prev.approvalQueue, track]
@@ -552,20 +673,94 @@ const App: React.FC = () => {
       });
     });
 
+    newSocket.on('track-playing', ({ trackId, startTime }) => {
+        setSession(prev => {
+            if (!prev) return null;
+            const track = prev.queue.find(t => t.id === trackId);
+            return {
+                ...prev,
+                nowPlaying: track || prev.nowPlaying,
+                currentTrackStartTime: startTime
+            };
+        });
+    });
+
+    newSocket.on('YOU_ARE_BANNED', ({ userId }) => {
+        // Only ban the user that actually matches
+        // using the global user state would be stale in this closure without dependency,
+        // but we can check if it matches since we store it at the top level
+        setUser(currentUser => {
+            if (currentUser && currentUser.id === userId) {
+                alert("You have been banned from this session.");
+                setSession(null);
+                setView(ViewState.HOME);
+            }
+            return currentUser;
+        });
+
+        // Always remove the banned user from the connected list if we are not the one banned
+        setSession(prev => prev ? {
+            ...prev,
+            connectedUsers: prev.connectedUsers.filter(u => u.id !== userId)
+        } : null);
+    });
+
+    newSocket.on('session-joined', ({ session }) => {
+        // Sync session from DB including currentTrackStartTime
+        setSession(prev => prev ? {
+            ...prev,
+            currentTrackStartTime: session.currentTrackStartTime
+        } : null);
+    });
+
+    newSocket.on('track-approved', ({ trackId }) => {
+        setSession(prev => {
+            if (!prev) return null;
+            const track = prev.approvalQueue.find(t => t.id === trackId);
+            if (!track) return prev;
+            return {
+                ...prev,
+                approvalQueue: prev.approvalQueue.filter(t => t.id !== trackId),
+                queue: [...prev.queue, { ...track, status: 'QUEUED' }]
+            }
+        });
+    });
+
+    newSocket.on('track-rejected', ({ trackId }) => {
+        setSession(prev => {
+            if (!prev) return null;
+            return {
+                ...prev,
+                approvalQueue: prev.approvalQueue.filter(t => t.id !== trackId)
+            }
+        });
+    });
+
     return () => {
       newSocket.disconnect();
     };
   }, []);
 
   // Initialize simulated session for host flow
-  const handleOnboardingComplete = (data: Partial<User>) => {
-      const newUser = { 
-          ...MOCK_USER, 
-          ...data,
-          isHost: false 
-      };
-      setUser(newUser as User);
-      setView(ViewState.AUTH); // Move to selection screen
+  const handleOnboardingComplete = async (data: Partial<User>) => {
+      try {
+          const res = await fetch('/api/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+          });
+          const dbUser = await res.json();
+          const newUser = {
+              ...MOCK_USER,
+              ...dbUser,
+              name: dbUser.pseudo, // Map to frontend prop
+              isHost: false
+          };
+          setUser(newUser as User);
+          setView(ViewState.AUTH); // Move to selection screen
+      } catch (error) {
+          console.error("Failed to create user", error);
+      }
   };
 
   const startSession = () => {
@@ -576,6 +771,7 @@ const App: React.FC = () => {
     // Create new session with updated types
     const newSession: JamSession = {
         ...createJam(hostUser.id),
+        id: 'JAM-8821', // Use fixed ID for demo so guest can join
         approvalQueue: [],
         history: [],
         connectedUsers: [hostUser],
@@ -583,7 +779,7 @@ const App: React.FC = () => {
             votingEnabled: true,
             guestUploads: true,
             explicitFilter: false,
-            requireApproval: false,
+            approvalRequired: false,
             guestVolumeControl: false,
             syncMode: false
         }
@@ -593,15 +789,20 @@ const App: React.FC = () => {
     setView(ViewState.PLAYER);
     setShowHostPanel(true);
     if (socket) {
-      socket.emit('join-session', newSession.id);
+      socket.emit('join-session', { sessionId: newSession.id, userId: user.id });
     }
   };
 
   const joinSession = () => {
       if (!user) return;
-      // Simulate joining
+      // Simulate joining (In a real app, this would be an input code)
+      // Using the fixed JAM-8821 for the demo mock
+      const demoSessionId = 'JAM-8821';
+
+      // Optimistically set mock session to show UI
       const newSession: JamSession = {
         ...createJam('host_other'),
+        id: demoSessionId,
         approvalQueue: [],
         history: [],
         connectedUsers: [user],
@@ -609,7 +810,7 @@ const App: React.FC = () => {
             votingEnabled: true,
             guestUploads: true,
             explicitFilter: false,
-            requireApproval: true, // Simulate joining a stricter session
+            approvalRequired: true, // Simulate joining a stricter session
             guestVolumeControl: false,
             syncMode: false
         }
@@ -617,31 +818,38 @@ const App: React.FC = () => {
       setSession(newSession);
       setView(ViewState.GUEST_JOIN);
       if (socket) {
-        socket.emit('join-session', newSession.id);
+        socket.emit('join-session', { sessionId: demoSessionId, userId: user.id });
       }
   };
 
   const handleAddSong = (song: Song) => {
       if (!session || !user) return;
-      const newSong = { ...song, addedBy: user.name, votes: 1, id: Math.random().toString() };
+      // Optimistically add with temporary ID, sourceId remains Audius ID
+      const tempId = Math.random().toString();
+      const newSong = { ...song, addedBy: user.id, votes: 1, sourceId: song.id, id: tempId };
       
       if (socket) {
-        socket.emit('add-track', { sessionId: session.id, track: newSong });
+        socket.emit('add-track', {
+            sessionId: session.id,
+            track: newSong,
+            userId: user.id,
+            isHost: user.isHost
+        });
       }
 
       setSession(prev => {
           if (!prev) return null;
           // Logic: If host requires approval AND user is not host -> approval queue
-          if (prev.settings.requireApproval && !user.isHost) {
+          if (prev.settings.approvalRequired && !user.isHost) {
               return {
                   ...prev,
-                  approvalQueue: [...prev.approvalQueue, newSong]
+                  approvalQueue: [...prev.approvalQueue, { ...newSong, status: 'PENDING' }]
               };
           }
           // Else -> main queue
           return {
               ...prev,
-              queue: [...prev.queue, newSong]
+              queue: [...prev.queue, { ...newSong, status: 'QUEUED' }]
           };
       });
       
@@ -650,17 +858,25 @@ const App: React.FC = () => {
   };
 
   const handleApproveSong = (song: Song) => {
+      if (socket) {
+          socket.emit('approve-track', { trackId: song.id, sessionId: session?.id });
+      }
+      // Optimistic update
       setSession(prev => {
           if (!prev) return null;
           return {
               ...prev,
               approvalQueue: prev.approvalQueue.filter(s => s.id !== song.id),
-              queue: [...prev.queue, song]
+              queue: [...prev.queue, { ...song, status: 'QUEUED' }]
           }
       });
   };
 
   const handleRejectSong = (song: Song) => {
+      if (socket) {
+          socket.emit('reject-track', { trackId: song.id, sessionId: session?.id });
+      }
+      // Optimistic update
       setSession(prev => {
           if (!prev) return null;
           return {
@@ -668,6 +884,22 @@ const App: React.FC = () => {
               approvalQueue: prev.approvalQueue.filter(s => s.id !== song.id)
           }
       });
+  };
+
+  const handleBanUser = (userId: string) => {
+      if (socket && session) {
+          socket.emit('ban-user', { userId, sessionId: session.id });
+      }
+      setSession(prev => prev ? {
+          ...prev,
+          connectedUsers: prev.connectedUsers.filter(u => u.id !== userId)
+      } : null);
+  };
+
+  const handlePlayTrack = (trackId: string) => {
+      if (socket && session) {
+          socket.emit('play-track', { trackId, sessionId: session.id });
+      }
   };
 
   const handleUpdateSetting = (key: keyof JamSession['settings'], val: boolean) => {
@@ -709,12 +941,13 @@ const App: React.FC = () => {
             onOpenHostPanel={() => setShowHostPanel(true)} 
             onApproveSong={handleApproveSong}
             onRejectSong={handleRejectSong}
+            onPlayTrack={handlePlayTrack}
         />;
       case ViewState.GUEST_JOIN:
       case ViewState.HOME:
         return <SearchView 
             onAddSong={handleAddSong} 
-            isApprovalMode={session?.settings.requireApproval && !user?.isHost || false}
+            isApprovalMode={session?.settings.approvalRequired && !user?.isHost || false}
             session={session}
         />;
       case ViewState.PROFILE:
@@ -741,6 +974,7 @@ const App: React.FC = () => {
             session={session} 
             onClose={() => setShowHostPanel(false)} 
             onUpdateSetting={handleUpdateSetting}
+            onBanUser={handleBanUser}
           />
       )}
 
