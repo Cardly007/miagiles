@@ -52,5 +52,6 @@ export enum ViewState {
   GUEST_JOIN = 'GUEST_JOIN',
   PLAYER = 'PLAYER',
   PROFILE = 'PROFILE',
-  CAR_MODE = 'CAR_MODE'
+  CAR_MODE = 'CAR_MODE',
+  SEARCH = 'SEARCH'
 }

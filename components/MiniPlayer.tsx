@@ -15,7 +15,7 @@ export const MiniPlayer: React.FC<MiniPlayerProps> = ({ currentSong, isPlaying, 
     return (
         <div
             onClick={onClick}
-            className="fixed bottom-[72px] md:bottom-[60px] left-0 right-0 bg-zinc-900 border-t border-b border-white/10 p-2 z-20 flex items-center justify-between cursor-pointer hover:bg-zinc-800 transition-colors animate-fade-in"
+            className="fixed bottom-[68px] md:bottom-[64px] left-2 right-2 rounded-xl bg-zinc-900 border border-white/10 p-2 z-20 flex items-center justify-between cursor-pointer hover:bg-zinc-800 transition-colors animate-slide-up shadow-2xl"
         >
             <div className="flex items-center gap-3 overflow-hidden flex-1">
                 <img src={currentSong.coverUrl} className="w-10 h-10 rounded-md object-cover flex-shrink-0" alt="Cover" />
