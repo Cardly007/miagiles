@@ -17,7 +17,7 @@ export const createJam = (hostId: string): JamSession => {
       votingEnabled: true,
       guestUploads: false,
       explicitFilter: false,
-      requireApproval: false,
+      approvalRequired: false,
       guestVolumeControl: false,
       syncMode: false
     }
