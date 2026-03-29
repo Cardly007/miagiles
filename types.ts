@@ -53,5 +53,6 @@ export enum ViewState {
   PLAYER = 'PLAYER',
   PROFILE = 'PROFILE',
   CAR_MODE = 'CAR_MODE',
-  SEARCH = 'SEARCH'
+  SEARCH = 'SEARCH',
+  DISCOVER = 'DISCOVER'
 }

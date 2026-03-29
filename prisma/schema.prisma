@@ -15,10 +15,18 @@ model User {
   bio           String?   // Bio utilisateur [cite: 6]
   createdAt     DateTime  @default(now())
   
+  coverUrl      String?   // Image de bannière de profil
+  spotifyId     String?   // Pour import de playlists
+  totalListeningTime Int @default(0) // En secondes
+
   // Relations
   ownedJams     JamSession[] @relation("HostRelation")
   tracksAdded   Track[]      @relation("UserTracks")
   bannedFrom    BannedUser[] @relation("UserBans")
+  participations JamParticipation[] @relation("UserParticipations")
+  messages      Message[]    @relation("UserMessages")
+  friends1      Friend[]     @relation("UserFriends1")
+  friends2      Friend[]     @relation("UserFriends2")
 }
 
 // 2. Gestion de la Session de Jam
@@ -28,6 +36,13 @@ model JamSession {
   isActive      Boolean   @default(true) // Statut "LIVE SESSION" [cite: 25, 82]
   createdAt     DateTime  @default(now())
   
+  // Nouvelles métadonnées (V2)
+  isPublic      Boolean   @default(true)
+  name          String?
+  genre         String?
+  listenerCount Int       @default(0)
+  coverUrl      String?
+
   // Paramètres de Permissions (Sprint 1 & 2)
   votingEnabled Boolean   @default(true)  // [cite: 31, 100]
   guestUploads  Boolean   @default(false) // [cite: 33, 106]
@@ -41,6 +56,8 @@ model JamSession {
   host          User      @relation("HostRelation", fields: [hostId], references: [id])
   queue         Track[]   @relation("SessionQueue")
   bannedUsers   BannedUser[] @relation("SessionBans")
+  messages      Message[]    @relation("SessionMessages")
+  participations JamParticipation[] @relation("SessionParticipations")
 }
 
 // 4. Banned Users
@@ -83,4 +100,41 @@ enum TrackStatus {
   QUEUED   // "Next up in the mix" [cite: 60, 91]
   PLAYED
   PENDING  // "Suggestion Mode" pending approval
+}
+
+// 5. Chat en Temps Réel
+model Message {
+  id            String    @id @default(cuid())
+  content       String    // Max 500 chars
+  sessionId     String
+  session       JamSession @relation("SessionMessages", fields: [sessionId], references: [id], onDelete: Cascade)
+  authorId      String
+  author        User       @relation("UserMessages", fields: [authorId], references: [id])
+  createdAt     DateTime   @default(now())
+  isDeleted     Boolean    @default(false)
+}
+
+// 6. Historique de Participation
+model JamParticipation {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation("UserParticipations", fields: [userId], references: [id])
+  sessionId     String
+  session       JamSession @relation("SessionParticipations", fields: [sessionId], references: [id], onDelete: Cascade)
+  joinedAt      DateTime  @default(now())
+  leftAt        DateTime?
+  role          String    // "HOST" ou "GUEST"
+}
+
+// 7. Système d'Amis
+model Friend {
+  id            String    @id @default(cuid())
+  userId1       String
+  user1         User      @relation("UserFriends1", fields: [userId1], references: [id])
+  userId2       String
+  user2         User      @relation("UserFriends2", fields: [userId2], references: [id])
+  status        String    // "PENDING", "ACCEPTED"
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId1, userId2])
 }

@@ -85,6 +85,101 @@ async function startServer() {
     }
   });
 
+  // F3 - Public Rooms API
+  app.get('/api/sessions', async (req, res) => {
+    try {
+      const { genre, sort, q } = req.query;
+
+      let whereClause: any = { isPublic: true, isActive: true };
+
+      if (genre) {
+        whereClause.genre = String(genre);
+      }
+
+      if (q) {
+        whereClause.OR = [
+          { name: { contains: String(q) } },
+          { host: { pseudo: { contains: String(q) } } }
+        ];
+      }
+
+      let orderByClause: any = { listenerCount: 'desc' };
+      if (sort === 'recent') {
+        orderByClause = { createdAt: 'desc' };
+      }
+
+      const sessions = await prisma.jamSession.findMany({
+        where: whereClause,
+        include: {
+          host: { select: { pseudo: true, photoUrl: true } },
+          queue: { where: { status: 'PLAYING' }, take: 1 }
+        },
+        orderBy: orderByClause
+      });
+
+      res.json(sessions);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+      res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+  });
+
+  app.post('/api/sessions', async (req, res) => {
+    try {
+      const { name, genre, isPublic, hostId } = req.body;
+      const session = await prisma.jamSession.create({
+        data: {
+          sessionId: `JAM-${Math.floor(1000 + Math.random() * 9000)}`,
+          hostId: hostId,
+          name: name || 'New Jam',
+          genre: genre || 'Pop',
+          isPublic: isPublic !== undefined ? isPublic : true,
+          listenerCount: 1
+        }
+      });
+      res.json(session);
+    } catch (error) {
+      console.error('Error creating session:', error);
+      res.status(500).json({ error: 'Failed to create session' });
+    }
+  });
+
+  app.patch('/api/sessions/:id', async (req, res) => {
+    try {
+      const { isPublic, name, genre } = req.body;
+      const session = await prisma.jamSession.update({
+        where: { id: req.params.id },
+        data: { isPublic, name, genre }
+      });
+
+      // Emit session update to all clients in the room (F3)
+      io.to(req.params.id).emit('session-updated', { session });
+
+      res.json(session);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to update session' });
+    }
+  });
+
+  // F6 - User History API
+  app.get('/api/users/:id/sessions', async (req, res) => {
+    try {
+      const history = await prisma.jamParticipation.findMany({
+        where: { userId: req.params.id },
+        include: {
+          session: {
+            include: { host: true }
+          }
+        },
+        orderBy: { joinedAt: 'desc' },
+        take: 20
+      });
+      res.json(history);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch history' });
+    }
+  });
+
   // WebSockets for Live Queue
   io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
@@ -111,12 +206,88 @@ async function startServer() {
       socket.join(sessionId);
       console.log(`User ${userId || socket.id} joined session ${sessionId}`);
 
-      // Return session data including sync time
+      // Fetch session data (F6 - Session Persistence & State Reload)
       const session = await prisma.jamSession.findUnique({
-        where: { id: sessionId }
+        where: { id: sessionId },
+        include: {
+          queue: { orderBy: { order: 'asc' } },
+          host: true
+        }
       });
+
       if (session) {
+         // F6: Create or update Participation
+         if (userId) {
+            const role = session.hostId === userId ? 'HOST' : 'GUEST';
+            await prisma.jamParticipation.create({
+              data: {
+                userId,
+                sessionId,
+                role
+              }
+            });
+
+            // F3: Increment Listener Count
+            await prisma.jamSession.update({
+              where: { id: sessionId },
+              data: { listenerCount: { increment: 1 } }
+            });
+
+            // Broadcast new listener count
+            io.to(sessionId).emit('listener-count', {
+               sessionId,
+               count: session.listenerCount + 1
+            });
+
+            // F5: Notify Host about new listener
+            if (role === 'GUEST') {
+                const user = await prisma.user.findUnique({ where: { id: userId } });
+                io.to(sessionId).emit('notification', {
+                  type: 'NEW_LISTENER',
+                  message: `👤 ${user?.pseudo || 'A user'} a rejoint le Jam`,
+                  targetId: session.hostId
+                });
+            }
+         }
+
+         // F2: Load chat history (last 50 messages)
+         const messages = await prisma.message.findMany({
+            where: { sessionId, isDeleted: false },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+            include: { author: { select: { id: true, pseudo: true, photoUrl: true } } }
+         });
+
+         // Emit full state to the joined client
          socket.emit('session-joined', { session });
+         socket.emit('session-state', { session, messages: messages.reverse() });
+      }
+    });
+
+    // F2 - Chat Events
+    socket.on('send-message', async (data) => {
+      try {
+         const { sessionId, content, authorId } = data;
+         const message = await prisma.message.create({
+            data: { sessionId, content, authorId },
+            include: { author: { select: { id: true, pseudo: true, photoUrl: true } } }
+         });
+         io.to(sessionId).emit('new-message', message);
+      } catch (error) {
+         console.error('Error sending message:', error);
+      }
+    });
+
+    socket.on('delete-message', async (data) => {
+      try {
+         const { messageId, sessionId } = data;
+         await prisma.message.update({
+            where: { id: messageId },
+            data: { isDeleted: true }
+         });
+         io.to(sessionId).emit('message-deleted', { messageId });
+      } catch (error) {
+         console.error('Error deleting message:', error);
       }
     });
 
@@ -181,6 +352,15 @@ async function startServer() {
               status: status,
               tempId: track.id // Send back tempId so frontend can replace it
             });
+
+            // F5: Notification for track added
+            if (userId) {
+                const user = await prisma.user.findUnique({ where: { id: userId } });
+                io.to(sessionId).emit('notification', {
+                  type: 'TRACK_ADDED',
+                  message: `🎵 ${user?.pseudo || 'A user'} a ajouté ${track.title}`
+                });
+            }
         }
 
       } catch (error) {
@@ -301,6 +481,30 @@ async function startServer() {
        } catch (error) {
          console.error('Error seeking track', error);
        }
+    });
+
+    socket.on('disconnecting', async () => {
+      for (const room of socket.rooms) {
+          if (room !== socket.id) {
+              // It's a session room
+              try {
+                  const session = await prisma.jamSession.findUnique({ where: { id: room } });
+                  if (session && session.listenerCount > 0) {
+                      await prisma.jamSession.update({
+                          where: { id: room },
+                          data: { listenerCount: { decrement: 1 } }
+                      });
+
+                      io.to(room).emit('listener-count', {
+                          sessionId: room,
+                          count: session.listenerCount - 1
+                      });
+                  }
+              } catch (e) {
+                  console.error('Error handling disconnect listener count decrement', e);
+              }
+          }
+      }
     });
 
     socket.on('disconnect', () => {
