@@ -1,6 +1,7 @@
 export interface User {
   id: string;
   name: string;
+  pseudo?: string;
   avatar: string;
   bio?: string;
   isHost: boolean;
@@ -54,5 +55,6 @@ export enum ViewState {
   PROFILE = 'PROFILE',
   CAR_MODE = 'CAR_MODE',
   SEARCH = 'SEARCH',
-  DISCOVER = 'DISCOVER'
+  DISCOVER = 'DISCOVER',
+  SOCIAL = 'SOCIAL'
 }
