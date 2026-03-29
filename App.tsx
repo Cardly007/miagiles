@@ -14,9 +14,15 @@ import {
   Play, Pause, SkipForward, SkipBack, Shuffle, Repeat, 
   Share2, Search, Mic, ArrowRight,
   Radio, Users, Heart, Settings, Plus, Upload, Car,
-  Music, UserPlus, CheckCircle, Smartphone, Wifi, X, Cloud, Disc
+  Music, UserPlus, CheckCircle, Smartphone, Wifi, X, Cloud, Disc,
+  MessageCircle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+
+import { ChatPanel, ChatMessageData } from './components/ChatPanel';
+import { DiscoverView } from './components/DiscoverView';
+import { NotificationContainer } from './components/NotificationToast';
+import { useNotifications } from './hooks/useNotifications';
 
 // --- Onboarding Component ---
 const Onboarding: React.FC<{ onComplete: (user: Partial<User>) => void }> = ({ onComplete }) => {
@@ -177,120 +183,117 @@ const PlayerView: React.FC<{
     onResumeTrack: () => void,
     onSeekTrack: (time: number) => void,
     onNextTrack: () => void,
-    onPrevTrack: () => void
-}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack, onPauseTrack, onResumeTrack, onSeekTrack, onNextTrack, onPrevTrack }) => {
+    onPrevTrack: () => void,
+    chatMessages: ChatMessageData[],
+    onSendMessage: (content: string) => void,
+    onDeleteMessage: (msgId: string) => void,
+    currentUserId: string
+}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack, onPauseTrack, onResumeTrack, onSeekTrack, onNextTrack, onPrevTrack, chatMessages, onSendMessage, onDeleteMessage, currentUserId }) => {
     const currentSong = session?.nowPlaying;
     const [progress, setProgress] = useState(0);
+    const [showChat, setShowChat] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
-    const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-    const [sourceNode, setSourceNode] = useState<AudioBufferSourceNode | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
 
-    // Setup Audio Context & Sync
+    // F1 - Audio Sync Fix using native HTML <audio> element
+    const audioRef = React.useRef<HTMLAudioElement | null>(null);
+    const hasTriggeredNextRef = React.useRef(false);
+
     useEffect(() => {
+        // Initialize audio element if it doesn't exist
+        if (!audioRef.current) {
+            audioRef.current = new Audio();
+            audioRef.current.crossOrigin = "anonymous";
+
+            audioRef.current.addEventListener('timeupdate', () => {
+                if (audioRef.current) {
+                    setCurrentTime(audioRef.current.currentTime);
+                    if (audioRef.current.duration) {
+                        setDuration(audioRef.current.duration);
+                        setProgress((audioRef.current.currentTime / audioRef.current.duration) * 100);
+                    }
+                }
+            });
+
+            audioRef.current.addEventListener('ended', () => {
+                if (isHost && !hasTriggeredNextRef.current) {
+                    hasTriggeredNextRef.current = true;
+                    onNextTrack();
+                }
+            });
+
+            audioRef.current.addEventListener('loadedmetadata', () => {
+                if (audioRef.current) {
+                    setDuration(audioRef.current.duration);
+                }
+            });
+        }
+
+        const audio = audioRef.current;
+
         if (!session?.nowPlaying || !session.currentTrackStartTime) {
-            if (sourceNode) {
-                sourceNode.stop();
-                setSourceNode(null);
-            }
+            audio.pause();
+            audio.src = '';
             setIsPlaying(false);
             setProgress(0);
             setCurrentTime(0);
             return;
         }
 
-        let actx = audioContext;
-        if (!actx) {
-            actx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            setAudioContext(actx);
-        }
-
         const playTrack = async () => {
-             if (!currentSong?.sourceId) return;
+            if (!currentSong?.sourceId) return;
 
-             // 1. Fetch the stream from Audius
-             let streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
+            const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
 
-             try {
-                // If it's already playing, stop the old one
-                if (sourceNode) {
-                    sourceNode.stop();
-                    setSourceNode(null);
+            // Only change source if it's a new track
+            if (audio.src !== streamUrl) {
+                audio.src = streamUrl;
+                hasTriggeredNextRef.current = false;
+            }
+
+            // Calculate Sync
+            const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
+            const now = Date.now();
+            let offset = (now - serverStartTime) / 1000;
+
+            if (offset < 0) offset = 0;
+
+            // Apply offset if difference is > 2 seconds (to avoid constant micro-stutters)
+            if (Math.abs(audio.currentTime - offset) > 2) {
+                audio.currentTime = offset;
+            }
+
+            if (session.isPaused) {
+                audio.pause();
+                setIsPlaying(false);
+            } else {
+                try {
+                    await audio.play();
+                    setIsPlaying(true);
+                } catch (error) {
+                    console.error("Error playing audio for sync:", error);
+                    setIsPlaying(false);
                 }
-
-                const response = await fetch(streamUrl);
-                const arrayBuffer = await response.arrayBuffer();
-                const audioBuffer = await actx!.decodeAudioData(arrayBuffer);
-                setDuration(audioBuffer.duration);
-
-                const source = actx!.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(actx!.destination);
-
-                // Calculate Sync
-                const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
-                const now = Date.now();
-                let offset = (now - serverStartTime) / 1000;
-
-                if (offset < 0) offset = 0;
-
-                source.start(0, offset);
-                setSourceNode(source);
-                setIsPlaying(session.isPaused !== true);
-
-                if (session.isPaused) {
-                    actx!.suspend();
-                } else if (actx!.state === 'suspended') {
-                    actx!.resume();
-                }
-
-             } catch (error) {
-                 console.error("Error playing audio for sync:", error);
-             }
+            }
         };
 
         playTrack();
 
         return () => {
-            if (sourceNode) {
-                sourceNode.stop();
+            // Cleanup is handled when the component unmounts entirely
+        };
+    }, [session?.nowPlaying?.id, session?.currentTrackStartTime, session?.isPaused, currentSong?.sourceId]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.src = '';
             }
         };
-    }, [session?.nowPlaying?.id, session?.currentTrackStartTime, session?.isPaused]);
-
-    // Progress updating
-    const hasTriggeredNextRef = React.useRef(false);
-
-    useEffect(() => {
-        // Reset ref when a new track starts
-        hasTriggeredNextRef.current = false;
-    }, [session?.nowPlaying?.id]);
-
-    useEffect(() => {
-        let interval: NodeJS.Timeout;
-        if (isPlaying && session?.currentTrackStartTime && duration > 0) {
-            interval = setInterval(() => {
-                const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
-                let now = Date.now();
-
-                let currentSec = (now - serverStartTime) / 1000;
-
-                // Track ends
-                if (currentSec > duration) {
-                    currentSec = duration;
-                    if (isHost && !hasTriggeredNextRef.current) {
-                        hasTriggeredNextRef.current = true;
-                        onNextTrack();
-                    }
-                }
-
-                setCurrentTime(currentSec);
-                setProgress((currentSec / duration) * 100);
-            }, 100);
-        }
-        return () => clearInterval(interval);
-    }, [isPlaying, session?.currentTrackStartTime, duration, isHost, session?.queue]);
+    }, []);
 
     // Format time (e.g., 65 -> "1:05")
     const formatTime = (time: number) => {
@@ -306,7 +309,7 @@ const PlayerView: React.FC<{
         if (isPlaying) {
             onPauseTrack();
         } else {
-            if (audioContext && audioContext.state === 'suspended' && sourceNode) {
+            if (audioRef.current && session?.nowPlaying && session.isPaused) {
                 onResumeTrack();
             } else if (session?.nowPlaying) {
                 // Not playing and no source node, restart track
@@ -327,9 +330,29 @@ const PlayerView: React.FC<{
     };
 
     return (
-        <div className="flex flex-col h-full bg-black pb-24">
+        <div className="flex flex-col h-full bg-black pb-24 relative">
             <Header showSettings={isHost} onSettingsClick={onOpenHostPanel} />
             
+            {showChat && (
+                <div className="fixed inset-0 bg-black/50 z-30" onClick={() => setShowChat(false)}></div>
+            )}
+            <div className={`fixed right-0 top-0 bottom-0 z-40 transform transition-transform duration-300 ${showChat ? 'translate-x-0' : 'translate-x-full'}`}>
+                <ChatPanel
+                    messages={chatMessages}
+                    onSendMessage={onSendMessage}
+                    onDeleteMessage={onDeleteMessage}
+                    currentUserId={currentUserId}
+                    isHost={isHost}
+                />
+            </div>
+
+            <button
+                onClick={() => setShowChat(!showChat)}
+                className="fixed bottom-28 right-6 bg-zinc-800 p-3 rounded-full text-white shadow-xl z-20 border border-zinc-700 hover:bg-zinc-700 transition-colors"
+            >
+                <MessageCircle size={24} />
+            </button>
+
             <div className="flex-1 overflow-y-auto no-scrollbar">
                 {currentSong ? (
                     <div className="p-6 relative">
@@ -662,6 +685,15 @@ const SearchView: React.FC<{
 
 // --- Profile View ---
 const ProfileView: React.FC<{ user: User, onLogout: () => void, onChangeView: (v: ViewState) => void }> = ({ user, onLogout, onChangeView }) => {
+    const [history, setHistory] = useState<any[]>([]);
+
+    useEffect(() => {
+        fetch(`/api/users/${user.id}/sessions`)
+            .then(res => res.json())
+            .then(data => setHistory(data))
+            .catch(console.error);
+    }, [user.id]);
+
     return (
         <div className="h-full bg-black flex flex-col pt-8 pb-24 overflow-y-auto">
              <div className="px-6 flex justify-between items-start mb-6">
@@ -674,7 +706,7 @@ const ProfileView: React.FC<{ user: User, onLogout: () => void, onChangeView: (v
                         <p className="text-gray-500 text-sm mt-1">{user.bio || 'No bio yet.'}</p>
                         <div className="flex items-center gap-4 mt-3">
                             <div className="text-xs font-bold text-white">{user.friends} <span className="text-gray-500 font-normal">Friends</span></div>
-                            <div className="text-xs font-bold text-white">12 <span className="text-gray-500 font-normal">Jams</span></div>
+                            <div className="text-xs font-bold text-white">{history.length} <span className="text-gray-500 font-normal">Jams</span></div>
                         </div>
                     </div>
                 </div>
@@ -694,7 +726,7 @@ const ProfileView: React.FC<{ user: User, onLogout: () => void, onChangeView: (v
                         <Smartphone size={14} /> Pinned Tracks
                     </h3>
                     <div className="space-y-2">
-                        {user.pinnedSongs?.map((song, i) => (
+                        {user.pinnedSongs?.length ? user.pinnedSongs.map((song, i) => (
                              <div key={i} className="flex items-center gap-3 bg-zinc-900/50 p-2 rounded-lg">
                                 <img src={song.coverUrl} className="w-10 h-10 rounded bg-zinc-800 object-cover" />
                                 <div className="flex-1 min-w-0">
@@ -702,39 +734,37 @@ const ProfileView: React.FC<{ user: User, onLogout: () => void, onChangeView: (v
                                     <div className="text-xs text-gray-500 truncate">{song.artist}</div>
                                 </div>
                              </div>
-                        ))}
-                    </div>
-                 </div>
-
-                 {/* Imported Playlists */}
-                 <div>
-                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <Cloud size={14} /> Playlists
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                        {user.playlists?.map(pl => (
-                            <div key={pl.id} className="bg-zinc-900 p-3 rounded-xl border border-white/5 flex items-center gap-3">
-                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${pl.icon === 'green' ? 'bg-green-900/30 text-green-500' : 'bg-purple-900/30 text-purple-500'}`}>
-                                    <Music size={20} />
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-xs font-bold truncate text-white">{pl.name}</div>
-                                    <div className="text-[10px] text-gray-500">{pl.source}</div>
-                                </div>
-                            </div>
-                        ))}
+                        )) : (
+                            <div className="text-sm text-gray-500 italic">No pinned tracks yet.</div>
+                        )}
                     </div>
                  </div>
 
                  {/* History */}
-                 <div className="bg-zinc-900 p-4 rounded-xl flex items-center justify-between cursor-pointer hover:bg-zinc-800 transition-colors">
-                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-zinc-950 rounded-full text-brand-red">
-                            <Radio size={18} />
-                        </div>
-                        <span className="font-bold text-sm">Jam History</span>
-                     </div>
-                     <ArrowRight size={16} className="text-gray-500" />
+                 <div>
+                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <Radio size={14} /> Jam History
+                    </h3>
+                    <div className="space-y-3">
+                        {history.length > 0 ? history.map((participation: any) => (
+                            <div key={participation.id} className="bg-zinc-900 p-4 rounded-xl flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${participation.role === 'HOST' ? 'bg-brand-red/20 text-brand-red' : 'bg-blue-500/20 text-blue-500'}`}>
+                                        <Disc size={20} />
+                                    </div>
+                                    <div>
+                                        <div className="text-sm font-bold text-white">{participation.session.name || 'Untitled Jam'}</div>
+                                        <div className="text-[10px] text-gray-500">
+                                            {new Date(participation.joinedAt).toLocaleDateString()} • {participation.role}
+                                        </div>
+                                    </div>
+                                </div>
+                                <ArrowRight size={16} className="text-gray-500" />
+                            </div>
+                        )) : (
+                            <div className="text-sm text-gray-500 italic">No jam history yet. Join a room!</div>
+                        )}
+                    </div>
                  </div>
 
                  <div className="pt-4 border-t border-zinc-800">
@@ -772,10 +802,87 @@ const App: React.FC = () => {
   const [showHostPanel, setShowHostPanel] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false); // Mock play state
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessageData[]>([]);
+  const { notifications, addNotification, removeNotification } = useNotifications();
 
   useEffect(() => {
     const newSocket = io();
     setSocket(newSocket);
+
+    // F6 - Load full session state
+    newSocket.on('session-state', (data: any) => {
+        if (data.session) {
+            // Map DB session format to frontend format
+            const activeQueue = data.session.queue.filter((t: any) => t.status === 'QUEUED' || t.status === 'PLAYING');
+            const nowPlaying = activeQueue.find((t: any) => t.status === 'PLAYING') || null;
+            const queue = activeQueue.filter((t: any) => t.status === 'QUEUED');
+
+            setSession(prev => ({
+                ...(prev || createJam(data.session.hostId)),
+                id: data.session.id,
+                name: data.session.name,
+                isPaused: data.session.isPaused,
+                currentTrackStartTime: data.session.currentTrackStartTime,
+                listenerCount: data.session.listenerCount,
+                nowPlaying: nowPlaying ? {
+                    ...nowPlaying,
+                    source: nowPlaying.platform,
+                    coverUrl: nowPlaying.thumbnail
+                } : undefined,
+                queue: queue.map((t: any) => ({
+                    ...t,
+                    source: t.platform,
+                    coverUrl: t.thumbnail
+                })),
+                settings: {
+                    ...(prev?.settings || {
+                        votingEnabled: true,
+                        guestUploads: true,
+                        explicitFilter: false,
+                        approvalRequired: false,
+                        guestVolumeControl: false,
+                        syncMode: false
+                    }),
+                    approvalRequired: data.session.approvalRequired
+                }
+            }));
+
+            // F6 Persistence logic
+            localStorage.setItem('onlyjam_sessionId', data.session.id);
+
+            // Re-sync isHost state based on session data
+            const savedUserId = localStorage.getItem('onlyjam_userId');
+            if (savedUserId) {
+                const isHost = data.session.hostId === savedUserId;
+                setUser(prev => prev ? { ...prev, isHost } : null);
+            }
+        }
+        if (data.messages) {
+            setChatMessages(data.messages);
+        }
+    });
+
+    // F2 - Chat Events
+    newSocket.on('new-message', (msg: ChatMessageData) => {
+        setChatMessages(prev => [...prev, msg]);
+    });
+
+    newSocket.on('message-deleted', ({ messageId }) => {
+        setChatMessages(prev => prev.map(m => m.id === messageId ? { ...m, isDeleted: true } : m));
+    });
+
+    // F3 - Listener Count update
+    newSocket.on('listener-count', ({ count }) => {
+        setSession(prev => prev ? { ...prev, listenerCount: count } : null);
+    });
+
+    // F5 - Notifications
+    newSocket.on('notification', (data: any) => {
+        // Only show if it's for everyone, or specifically targeted
+        if (!data.targetId || data.targetId === user?.id) {
+            addNotification({ type: data.type, message: data.message });
+        }
+    });
 
     newSocket.on('track-added', (track: any) => {
       setSession(prev => {
@@ -916,6 +1023,8 @@ const App: React.FC = () => {
   // Auto-login check
   useEffect(() => {
       const savedUserId = localStorage.getItem('onlyjam_userId');
+      const savedSessionId = localStorage.getItem('onlyjam_sessionId');
+
       if (savedUserId) {
           // Verify user exists and load profile
           fetch(`/api/users/${savedUserId}`)
@@ -931,13 +1040,21 @@ const App: React.FC = () => {
                     isHost: false
                 };
                 setUser(loadedUser as User);
-                setView(ViewState.HOME);
+
+                // If they have an active session, auto-join it
+                if (savedSessionId && socket) {
+                    socket.emit('join-session', { sessionId: savedSessionId, userId: loadedUser.id });
+                    setView(ViewState.PLAYER);
+                } else if (!savedSessionId) {
+                    setView(ViewState.HOME);
+                }
             })
             .catch(() => {
                 localStorage.removeItem('onlyjam_userId');
+                localStorage.removeItem('onlyjam_sessionId');
             });
       }
-  }, []);
+  }, [socket]); // Re-run if socket becomes available
 
   // Initialize simulated session for host flow
   const handleOnboardingComplete = async (data: Partial<User>) => {
@@ -962,33 +1079,49 @@ const App: React.FC = () => {
       }
   };
 
-  const startSession = () => {
+  const startSession = async () => {
     if (!user) return;
     const hostUser = { ...user, isHost: true };
     setUser(hostUser);
     
-    // Create new session with updated types
-    const newSession: JamSession = {
-        ...createJam(hostUser.id),
-        id: 'JAM-8821', // Use fixed ID for demo so guest can join
-        approvalQueue: [],
-        history: [],
-        connectedUsers: [hostUser],
-        settings: {
-            votingEnabled: true,
-            guestUploads: true,
-            explicitFilter: false,
-            approvalRequired: false,
-            guestVolumeControl: false,
-            syncMode: false
+    try {
+        const res = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: `${hostUser.name}'s Jam`,
+                genre: 'Pop',
+                isPublic: true,
+                hostId: hostUser.id
+            })
+        });
+        const dbSession = await res.json();
+
+        // Create new session with updated types
+        const newSession: JamSession = {
+            ...createJam(hostUser.id),
+            id: dbSession.id,
+            approvalQueue: [],
+            history: [],
+            connectedUsers: [hostUser],
+            settings: {
+                votingEnabled: true,
+                guestUploads: true,
+                explicitFilter: false,
+                approvalRequired: false,
+                guestVolumeControl: false,
+                syncMode: false
+            }
+        };
+
+        setSession(newSession);
+        setView(ViewState.PLAYER);
+        setShowHostPanel(true);
+        if (socket) {
+            socket.emit('join-session', { sessionId: newSession.id, userId: hostUser.id });
         }
-    };
-    
-    setSession(newSession);
-    setView(ViewState.PLAYER);
-    setShowHostPanel(true);
-    if (socket) {
-      socket.emit('join-session', { sessionId: newSession.id, userId: user.id });
+    } catch (error) {
+        console.error('Failed to create session in DB', error);
     }
   };
 
@@ -1122,6 +1255,25 @@ const App: React.FC = () => {
       }
   };
 
+  const handleSendMessage = (content: string) => {
+      if (socket && session && user) {
+          socket.emit('send-message', {
+              sessionId: session.id,
+              content,
+              authorId: user.id
+          });
+      }
+  };
+
+  const handleDeleteMessage = (messageId: string) => {
+      if (socket && session && user?.isHost) {
+          socket.emit('delete-message', {
+              sessionId: session.id,
+              messageId
+          });
+      }
+  };
+
   const handleNextTrack = () => {
       if (socket && session && session.queue.length > 0) {
           const nextTrack = session.queue[0];
@@ -1188,6 +1340,10 @@ const App: React.FC = () => {
             onSeekTrack={handleSeekTrack}
             onNextTrack={handleNextTrack}
             onPrevTrack={handlePrevTrack}
+            chatMessages={chatMessages}
+            onSendMessage={handleSendMessage}
+            onDeleteMessage={handleDeleteMessage}
+            currentUserId={user?.id || ''}
         />;
       case ViewState.GUEST_JOIN:
       case ViewState.SEARCH:
@@ -1196,6 +1352,13 @@ const App: React.FC = () => {
             isApprovalMode={session?.settings.approvalRequired && !user?.isHost || false}
             session={session}
         />;
+      case ViewState.DISCOVER:
+        return <DiscoverView onJoinSession={(sessionId) => {
+            if (socket && user) {
+                socket.emit('join-session', { sessionId, userId: user.id });
+                setView(ViewState.PLAYER);
+            }
+        }} />;
       case ViewState.PROFILE:
         return user ? <ProfileView user={user} onLogout={() => setView(ViewState.LANDING)} onChangeView={setView} /> : null;
       case ViewState.CAR_MODE:
@@ -1215,6 +1378,8 @@ const App: React.FC = () => {
 
   return (
     <div className="bg-black text-white min-h-screen font-sans selection:bg-brand-red selection:text-white">
+      <NotificationContainer notifications={notifications} removeNotification={removeNotification} />
+
       {renderView()}
 
       {/* Overlays */}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Play, User } from 'lucide-react';
+import { Home, Search, Play, User, Disc } from 'lucide-react';
 
 interface NavigationProps {
   currentView: string;
@@ -9,6 +9,7 @@ interface NavigationProps {
 export const Navigation: React.FC<NavigationProps> = ({ currentView, onChangeView }) => {
   const navItems = [
     { id: 'HOME', icon: Home, label: 'Home', view: 'HOME' },
+    { id: 'DISCOVER', icon: Disc, label: 'Discover', view: 'DISCOVER' },
     { id: 'SEARCH', icon: Search, label: 'Search', view: 'SEARCH' },
     { id: 'PLAYER', icon: Play, label: 'Listen', view: 'PLAYER' },
     { id: 'PROFILE', icon: User, label: 'Profile', view: 'PROFILE' },
