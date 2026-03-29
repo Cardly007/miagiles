@@ -85,6 +85,70 @@ async function startServer() {
     }
   });
 
+  // Etape 3 bis - Social Search & Friends API
+  app.get('/api/users/search/:query', async (req, res) => {
+    try {
+        const users = await prisma.user.findMany({
+            where: {
+                pseudo: { contains: req.params.query }
+            },
+            take: 10
+        });
+        res.json(users);
+    } catch (error) {
+        res.status(500).json({ error: 'Search failed' });
+    }
+  });
+
+  app.get('/api/friends/:userId', async (req, res) => {
+    try {
+        const friends = await prisma.friend.findMany({
+            where: {
+                OR: [
+                    { userId1: req.params.userId },
+                    { userId2: req.params.userId }
+                ]
+            },
+            include: {
+                user1: { select: { id: true, pseudo: true, photoUrl: true } },
+                user2: { select: { id: true, pseudo: true, photoUrl: true } }
+            }
+        });
+        res.json(friends);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load friends' });
+    }
+  });
+
+  app.post('/api/friends/request', async (req, res) => {
+    try {
+        const { fromId, toId } = req.body;
+
+        // Ensure they are ordered to respect unique constraint
+        const [userId1, userId2] = fromId < toId ? [fromId, toId] : [toId, fromId];
+
+        const friendReq = await prisma.friend.create({
+            data: { userId1, userId2, status: 'PENDING' }
+        });
+        res.json(friendReq);
+    } catch (error) {
+        res.status(500).json({ error: 'Request failed' });
+    }
+  });
+
+  app.patch('/api/friends/:id', async (req, res) => {
+    try {
+        const { status } = req.body;
+        const updated = await prisma.friend.update({
+            where: { id: req.params.id },
+            data: { status }
+        });
+        res.json(updated);
+    } catch (error) {
+        res.status(500).json({ error: 'Update failed' });
+    }
+  });
+
   // F3 - Public Rooms API
   app.get('/api/sessions', async (req, res) => {
     try {
@@ -185,7 +249,7 @@ async function startServer() {
     console.log('A user connected:', socket.id);
 
     socket.on('join-session', async (data) => {
-      const { sessionId, userId } = data;
+      const { sessionId, userId } = data; // sessionId might be the full UUID or the short code
 
       if (userId) {
         const isBanned = await prisma.bannedUser.findUnique({
@@ -203,65 +267,75 @@ async function startServer() {
         }
       }
 
-      socket.join(sessionId);
-      console.log(`User ${userId || socket.id} joined session ${sessionId}`);
-
-      // Fetch session data (F6 - Session Persistence & State Reload)
-      const session = await prisma.jamSession.findUnique({
-        where: { id: sessionId },
+      // First find the actual session, accepting either UUID or short code
+      const session = await prisma.jamSession.findFirst({
+        where: {
+            OR: [
+                { id: sessionId },
+                { sessionId: sessionId } // The "JAM-XXXX" code field in DB
+            ]
+        },
         include: {
           queue: { orderBy: { order: 'asc' } },
           host: true
         }
       });
 
-      if (session) {
-         // F6: Create or update Participation
-         if (userId) {
-            const role = session.hostId === userId ? 'HOST' : 'GUEST';
-            await prisma.jamParticipation.create({
-              data: {
-                userId,
-                sessionId,
-                role
-              }
-            });
-
-            // F3: Increment Listener Count
-            await prisma.jamSession.update({
-              where: { id: sessionId },
-              data: { listenerCount: { increment: 1 } }
-            });
-
-            // Broadcast new listener count
-            io.to(sessionId).emit('listener-count', {
-               sessionId,
-               count: session.listenerCount + 1
-            });
-
-            // F5: Notify Host about new listener
-            if (role === 'GUEST') {
-                const user = await prisma.user.findUnique({ where: { id: userId } });
-                io.to(sessionId).emit('notification', {
-                  type: 'NEW_LISTENER',
-                  message: `👤 ${user?.pseudo || 'A user'} a rejoint le Jam`,
-                  targetId: session.hostId
-                });
-            }
-         }
-
-         // F2: Load chat history (last 50 messages)
-         const messages = await prisma.message.findMany({
-            where: { sessionId, isDeleted: false },
-            orderBy: { createdAt: 'desc' },
-            take: 50,
-            include: { author: { select: { id: true, pseudo: true, photoUrl: true } } }
-         });
-
-         // Emit full state to the joined client
-         socket.emit('session-joined', { session });
-         socket.emit('session-state', { session, messages: messages.reverse() });
+      if (!session) {
+          socket.emit('session-not-found');
+          return;
       }
+
+      const actualRoomId = session.id;
+
+      socket.join(actualRoomId);
+      console.log(`User ${userId || socket.id} joined session ${actualRoomId}`);
+
+      // F6: Create or update Participation
+      if (userId) {
+        const role = session.hostId === userId ? 'HOST' : 'GUEST';
+        await prisma.jamParticipation.create({
+            data: {
+            userId,
+            sessionId: actualRoomId,
+            role
+            }
+        });
+
+        // F3: Increment Listener Count
+        await prisma.jamSession.update({
+            where: { id: actualRoomId },
+            data: { listenerCount: { increment: 1 } }
+        });
+
+        // Broadcast new listener count
+        io.to(actualRoomId).emit('listener-count', {
+            sessionId: actualRoomId,
+            count: session.listenerCount + 1
+        });
+
+        // F5: Notify Host about new listener
+        if (role === 'GUEST') {
+            const user = await prisma.user.findUnique({ where: { id: userId } });
+            io.to(actualRoomId).emit('notification', {
+                type: 'NEW_LISTENER',
+                message: `👤 ${user?.pseudo || 'A user'} a rejoint le Jam`,
+                targetId: session.hostId
+            });
+        }
+      }
+
+      // F2: Load chat history (last 50 messages)
+      const messages = await prisma.message.findMany({
+        where: { sessionId: actualRoomId, isDeleted: false },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        include: { author: { select: { id: true, pseudo: true, photoUrl: true } } }
+      });
+
+      // Emit full state to the joined client
+      socket.emit('session-joined', { session });
+      socket.emit('session-state', { session, messages: messages.reverse() });
     });
 
     // F2 - Chat Events

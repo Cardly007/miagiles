@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Search, Play, User, Disc } from 'lucide-react';
+import { Home, Search, Play, User, Disc, Users } from 'lucide-react';
 
 interface NavigationProps {
   currentView: string;
@@ -10,14 +10,14 @@ export const Navigation: React.FC<NavigationProps> = ({ currentView, onChangeVie
   const navItems = [
     { id: 'HOME', icon: Home, label: 'Home', view: 'HOME' },
     { id: 'DISCOVER', icon: Disc, label: 'Discover', view: 'DISCOVER' },
-    { id: 'SEARCH', icon: Search, label: 'Search', view: 'SEARCH' },
+    { id: 'SOCIAL', icon: Users, label: 'Social', view: 'SOCIAL' },
     { id: 'PLAYER', icon: Play, label: 'Listen', view: 'PLAYER' },
     { id: 'PROFILE', icon: User, label: 'Profile', view: 'PROFILE' },
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 px-6 py-3 pb-6 md:pb-3 z-30 bg-black">
-      <div className="flex items-center justify-between max-w-lg mx-auto w-full px-2">
+    <div className="fixed bottom-0 left-0 right-0 border-t border-white/10 px-6 py-2 pb-[env(safe-area-inset-bottom,20px)] z-30 bg-black/90 backdrop-blur-md">
+      <div className="flex items-center justify-between max-w-lg mx-auto w-full px-2 pt-2">
         {navItems.map((item) => {
            const isActive = currentView === item.view || (item.view === 'PLAYER' && currentView === 'HOST_PANEL');
 
