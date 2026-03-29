@@ -240,11 +240,11 @@ const PlayerView: React.FC<{
     return (
         <div className="flex flex-col h-full bg-black pb-24 relative">
             <Header showSettings={isHost} onSettingsClick={onOpenHostPanel} sessionCode={session?.code || session?.id.split('-')[0]} />
-            
+
             {showChat && (
                 <div className="fixed inset-0 bg-black/50 z-30" onClick={() => setShowChat(false)}></div>
             )}
-            <div className={`fixed right-0 top-0 bottom-0 z-40 transform transition-transform duration-300 ${showChat ? 'translate-x-0' : 'translate-x-full'}`}>
+            <div className={`fixed right-0 top-0 bottom-0 z-40 transform transition-transform duration-300 ${showChat ? 'translate-x-0' : 'translate-x-full'}`} style={{ width: '80%', maxWidth: '320px' }}>
                 <ChatPanel
                     messages={chatMessages}
                     onSendMessage={onSendMessage}
@@ -1383,8 +1383,19 @@ const App: React.FC = () => {
       case ViewState.CAR_MODE:
         return <CarView 
             session={session} 
-            isPlaying={isMusicPlaying} 
-            onTogglePlay={() => setIsMusicPlaying(!isMusicPlaying)}
+            isPlaying={isAudioPlaying}
+            onTogglePlay={() => {
+                 if (!isHost) return;
+                 if (isAudioPlaying) {
+                     handlePauseTrack();
+                 } else {
+                     if (session?.nowPlaying && session.isPaused) {
+                         handleResumeTrack();
+                     } else if (session?.nowPlaying) {
+                         handlePlayTrack(session.nowPlaying.id);
+                     }
+                 }
+            }}
             onExit={() => setView(ViewState.PROFILE)} 
         />;
       default:

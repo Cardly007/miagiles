@@ -39,7 +39,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ messages, onSendMessage, o
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border-l border-zinc-800 w-80 fixed right-0 top-0 bottom-0 z-40 pt-16">
+    <div className="flex flex-col h-full bg-zinc-900 border-l border-zinc-800 w-full pt-16">
       <div className="p-4 border-b border-zinc-800 font-bold flex items-center gap-2 text-white">
         <span>Live Chat</span>
       </div>
