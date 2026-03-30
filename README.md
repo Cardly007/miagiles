@@ -46,9 +46,11 @@ L'application sera accessible sur `http://localhost:4000` (ou le port défini da
 ### Option 2 : Lancer en Local (Node.js)
 
 1. **Installer yt-dlp (Requis pour YouTube)**
-   Vous devez avoir `python3` et `yt-dlp` installés sur votre machine (ou sandbox) pour que la lecture YouTube fonctionne.
+   Vous devez avoir `python3` et la toute **dernière version** de `yt-dlp` installés. Ne pas utiliser `apt-get install yt-dlp` car la version des dépôts Debian/Ubuntu est souvent obsolète et sera bloquée par YouTube (Erreur 400).
    ```bash
-   sudo apt-get update && sudo apt-get install -y python3 yt-dlp
+   sudo apt-get update && sudo apt-get install -y python3 wget
+   sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
+   sudo chmod a+rx /usr/local/bin/yt-dlp
    ```
 
 2. **Installer les dépendances Node.js**
