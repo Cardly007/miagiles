@@ -48,7 +48,10 @@ model JamSession {
   guestUploads  Boolean   @default(false) // [cite: 33, 106]
   explicitFilter Boolean  @default(false) // [cite: 35]
   approvalRequired Boolean @default(false)
+  isAnonymous   Boolean   @default(false) // Anonymous Music Mode
+
   currentTrackStartTime DateTime? // Time the track started for sync
+  pausedAt      DateTime? // The exact time the track was paused
   isPaused      Boolean   @default(false) // Is the current track paused
   
   // Relations
@@ -85,6 +88,7 @@ model Track {
   duration      Int?      // Durée en secondes [cite: 62]
   order         Int       @default(0) // Pour l'ordre de passage [cite: 60, 91]
   status        TrackStatus @default(QUEUED)
+  isRevealed    Boolean   @default(false) // For Anonymous Music Mode
   
   // Relations
   sessionId     String
