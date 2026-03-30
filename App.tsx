@@ -197,8 +197,9 @@ const PlayerView: React.FC<{
         currentTime: number;
         duration: number;
         isPlaying: boolean;
-    }
-}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack, onPauseTrack, onResumeTrack, onSeekTrack, onNextTrack, onPrevTrack, chatMessages, onSendMessage, onDeleteMessage, currentUserId, globalAudioProps }) => {
+    },
+    onRevealTrack: (trackId: string) => void
+}> = ({ session, isHost, onOpenHostPanel, onApproveSong, onRejectSong, onPlayTrack, onPauseTrack, onResumeTrack, onSeekTrack, onNextTrack, onPrevTrack, chatMessages, onSendMessage, onDeleteMessage, currentUserId, globalAudioProps, onRevealTrack }) => {
     const currentSong = session?.nowPlaying;
     const [showChat, setShowChat] = useState(false);
     const { progress, currentTime, duration, isPlaying } = globalAudioProps;
@@ -381,6 +382,10 @@ const PlayerView: React.FC<{
                                     isQueue
                                     onVote={() => {}}
                                     onPlay={isHost ? () => onPlayTrack(song.id) : undefined}
+                                    isAnonymousSession={session?.isAnonymous}
+                                    isHost={isHost}
+                                    isPlaying={song.id === currentSong?.id}
+                                    onReveal={() => onRevealTrack(song.id)}
                                 />
                             ))}
                             {(!session?.queue || session.queue.length === 0) && (
@@ -404,9 +409,11 @@ const SearchView: React.FC<{
     session: JamSession | null
 }> = ({ onAddSong, isApprovalMode, session }) => {
     const [query, setQuery] = useState('');
+    const [searchPlatform, setSearchPlatform] = useState<'audius' | 'youtube'>('audius');
     const [activeTab, setActiveTab] = useState<'All' | 'Spotify' | 'YouTube' | 'SoundCloud' | 'Local'>('All');
     const [apiResults, setApiResults] = useState<Song[]>([]);
     const [isSearching, setIsSearching] = useState(false);
+    const { addNotification } = useNotifications();
     
     // Audio Preview State
     const [previewAudio, setPreviewAudio] = useState<HTMLAudioElement | null>(null);
@@ -417,10 +424,13 @@ const SearchView: React.FC<{
             setApiResults([]);
             return;
         }
+
+        const debounceDelay = searchPlatform === 'youtube' ? 1000 : 500;
+
         const delayDebounceFn = setTimeout(async () => {
             setIsSearching(true);
             try {
-                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&platform=${searchPlatform}`);
                 if (res.ok) {
                     const data = await res.json();
                     const mappedData: Song[] = data.map((d: any) => ({
@@ -430,7 +440,7 @@ const SearchView: React.FC<{
                         artist: d.artist,
                         coverUrl: d.coverUrl,
                         source: d.platform === 'YOUTUBE' ? 'YouTube' : d.platform,
-                        duration: `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}`,
+                        duration: d.duration > 0 ? `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}` : 'Live',
                         votes: 0,
                         addedBy: ''
                     }));
@@ -441,10 +451,10 @@ const SearchView: React.FC<{
             } finally {
                 setIsSearching(false);
             }
-        }, 500);
+        }, debounceDelay);
 
         return () => clearTimeout(delayDebounceFn);
-    }, [query]);
+    }, [query, searchPlatform]);
 
     // Cleanup audio on unmount
     useEffect(() => {
@@ -458,6 +468,11 @@ const SearchView: React.FC<{
 
     const handlePlayPreview = (song: Song) => {
         if (!song.sourceId) return;
+
+        if (song.source === 'YouTube') {
+            alert('Preview is disabled for YouTube videos. Add to queue to listen!');
+            return;
+        }
 
         // If clicking the same song that is currently playing, pause it
         if (previewingSongId === song.id && previewAudio) {
@@ -515,35 +530,32 @@ const SearchView: React.FC<{
              <div className="p-4 sticky top-0 bg-black/95 z-20 backdrop-blur-sm">
                 <h2 className="text-2xl font-bold mb-4">Find Music</h2>
                 
+                {/* Platform Toggle (Audius / YouTube) */}
+                <div className="flex gap-2 mb-4 p-1 bg-zinc-900 border border-zinc-800 rounded-2xl">
+                    <button
+                       onClick={() => setSearchPlatform('audius')}
+                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors ${searchPlatform === 'audius' ? 'bg-zinc-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                       Audius
+                    </button>
+                    <button
+                       onClick={() => setSearchPlatform('youtube')}
+                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 ${searchPlatform === 'youtube' ? 'bg-[#FF0000]/20 text-[#FF0000] border border-[#FF0000]/30' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                       <Play size={14} fill={searchPlatform === 'youtube' ? 'currentColor' : 'none'} /> YouTube
+                    </button>
+                </div>
+
                 {/* Search Bar */}
                 <div className="relative mb-4">
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
                     <input 
                         type="text" 
-                        placeholder="Search across all platforms..." 
-                        className="w-full bg-zinc-900 border border-zinc-800 focus:border-brand-red text-white pl-12 pr-12 py-3.5 rounded-xl outline-none transition-all placeholder:text-zinc-600"
+                        placeholder={`Search on ${searchPlatform === 'audius' ? 'Audius' : 'YouTube'}...`}
+                        className={`w-full bg-zinc-900 border text-white pl-12 pr-12 py-3.5 rounded-xl outline-none transition-all placeholder:text-zinc-600 ${searchPlatform === 'youtube' ? 'border-[#FF0000]/50 focus:border-[#FF0000]' : 'border-zinc-800 focus:border-brand-red'}`}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                     />
-                </div>
-
-                {/* Platform Tabs */}
-                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-                    {[
-                        { id: 'All', label: 'All', color: 'bg-zinc-800' },
-                        { id: 'Spotify', label: 'Spotify', color: 'bg-[#1DB954]' },
-                        { id: 'YouTube', label: 'YouTube', color: 'bg-[#FF0000]' },
-                        { id: 'SoundCloud', label: 'SoundCloud', color: 'bg-[#FF5500]' },
-                        { id: 'Local', label: 'Files', color: 'bg-blue-500' },
-                    ].map(tab => (
-                         <button 
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id as any)}
-                            className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap border ${activeTab === tab.id ? `${tab.color} border-transparent text-white` : 'border-zinc-800 text-gray-400 bg-black hover:bg-zinc-900'}`}
-                         >
-                            {tab.label}
-                         </button>
-                    ))}
                 </div>
             </div>
 
@@ -796,9 +808,11 @@ const App: React.FC = () => {
         const playTrack = async () => {
             if (!currentSong.sourceId) return;
 
-            const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
+            const streamUrl = currentSong.source === 'YouTube'
+                ? `/api/stream/youtube/${currentSong.sourceId}`
+                : `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
 
-            if (audio.src !== streamUrl) {
+            if (audio.src !== streamUrl && audio.src !== window.location.origin + streamUrl) {
                 audio.src = streamUrl;
                 hasTriggeredNextRef.current = false;
             }
@@ -1103,7 +1117,27 @@ const App: React.FC = () => {
       }
   };
 
-  const startSession = async (name: string, genre: string, isPublic: boolean) => {
+  const leaveSession = () => {
+      if (socket) {
+          socket.emit('leave-session', { sessionId: session?.id, userId: user?.id });
+      }
+      setSession(null);
+      localStorage.removeItem('onlyjam_sessionId');
+      setView(ViewState.HOME);
+  };
+
+  const checkAndPromptLeave = (callback: () => void) => {
+      if (session) {
+          if (window.confirm("You are currently in a Jam. Do you want to leave it to join a new one?")) {
+              leaveSession();
+              callback();
+          }
+      } else {
+          callback();
+      }
+  };
+
+  const startSession = async (name: string, genre: string, isPublic: boolean, isAnonymous: boolean) => {
     if (!user) return;
     const hostUser = { ...user, isHost: true };
     setUser(hostUser);
@@ -1118,6 +1152,7 @@ const App: React.FC = () => {
                 name,
                 genre,
                 isPublic,
+                isAnonymous,
                 hostId: hostUser.id
             })
         });
@@ -1128,6 +1163,7 @@ const App: React.FC = () => {
             ...createJam(hostUser.id),
             id: dbSession.id,
             code: dbSession.sessionId, // Keep the JAM-XXXX format for display
+            isAnonymous: dbSession.isAnonymous,
             approvalQueue: [],
             history: [],
             connectedUsers: [hostUser],
@@ -1299,6 +1335,12 @@ const App: React.FC = () => {
       }
   };
 
+  const handleRevealTrack = (trackId: string) => {
+      if (socket && session) {
+          socket.emit('reveal-track', { trackId, sessionId: session.id });
+      }
+  };
+
   const handleUpdateSetting = (key: keyof JamSession['settings'], val: boolean) => {
       setSession(prev => prev ? {
           ...prev,
@@ -1333,8 +1375,9 @@ const App: React.FC = () => {
       case ViewState.HOME:
           return <HomeDashboard
               user={user}
-              onStartSession={() => setShowCreateModal(true)}
-              onJoinSession={() => setShowJoinModal(true)}
+              onStartSession={() => checkAndPromptLeave(() => setShowCreateModal(true))}
+              onJoinSession={() => checkAndPromptLeave(() => setShowJoinModal(true))}
+              onJoinSessionById={(id) => checkAndPromptLeave(() => joinSession(id))}
               onChangeView={setView}
           />;
       case ViewState.PLAYER:
@@ -1361,6 +1404,8 @@ const App: React.FC = () => {
                 duration: audioDuration,
                 isPlaying: isAudioPlaying
             }}
+            onLeaveSession={leaveSession}
+            onRevealTrack={handleRevealTrack}
         />;
       case ViewState.GUEST_JOIN:
       case ViewState.SEARCH:
@@ -1371,10 +1416,12 @@ const App: React.FC = () => {
         />;
       case ViewState.DISCOVER:
         return <DiscoverView onJoinSession={(sessionId) => {
-            if (socket && user) {
-                socket.emit('join-session', { sessionId, userId: user.id });
-                setView(ViewState.PLAYER);
-            }
+            checkAndPromptLeave(() => {
+                if (socket && user) {
+                    socket.emit('join-session', { sessionId, userId: user.id });
+                    setView(ViewState.PLAYER);
+                }
+            });
         }} />;
       case ViewState.SOCIAL:
         return user ? <SocialView currentUser={user} /> : null;

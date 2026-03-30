@@ -1,7 +1,7 @@
 FROM node:22-slim
 
-# Install OpenSSL for Prisma and curl for healthchecks
-RUN apt-get update -y && apt-get install -y openssl curl && rm -rf /var/lib/apt/lists/*
+# Install OpenSSL for Prisma, curl for healthchecks, and yt-dlp for YouTube audio streaming
+RUN apt-get update -y && apt-get install -y openssl curl python3 yt-dlp && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

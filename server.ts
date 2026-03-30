@@ -3,8 +3,34 @@ import { createServer as createViteServer } from 'vite';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
+import { exec } from 'child_process';
 
 const prisma = new PrismaClient();
+
+// In-memory cache for yt-dlp resolved stream URLs (TTL: 1 hour)
+const ytStreamCache = new Map<string, { url: string, expiresAt: number }>();
+
+// In-memory cache for YouTube Search API responses (TTL: 24 hours) to save quota
+const ytSearchCache = new Map<string, { data: any, expiresAt: number }>();
+
+// Helper functions for YouTube Data API
+function parseISO8601Duration(duration: string): number {
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return 0;
+  const hours = parseInt(match[1] || '0');
+  const minutes = parseInt(match[2] || '0');
+  const seconds = parseInt(match[3] || '0');
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function cleanArtistName(channelTitle: string): string {
+  // Remove common suffixes like " - Topic", "VEVO", "Official"
+  return channelTitle
+      .replace(/\s*-\s*Topic$/i, '')
+      .replace(/VEVO$/i, '')
+      .replace(/\s*Official$/i, '')
+      .trim();
+}
 
 async function startServer() {
   const app = express();
@@ -23,30 +49,98 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
-  // Simple YouTube Search Endpoint (Mocked for now)
+  // Unified Search Endpoint (Audius & YouTube Data API v3)
   app.get('/api/search', async (req, res) => {
-    const { q } = req.query;
+    const { q, platform = 'audius', maxResults = 15 } = req.query;
+
     if (!q) {
       return res.status(400).json({ error: 'Query parameter "q" is required' });
     }
 
+    const query = String(q);
+    const limit = Number(maxResults);
+
     try {
-      const response = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(q as string)}`);
-      const data = await response.json();
+      if (platform === 'youtube') {
+          const apiKey = process.env.YOUTUBE_API_KEY;
+          if (!apiKey || apiKey === 'your_youtube_api_key_here') {
+              return res.status(503).json({ error: 'YouTube search not configured (missing API key)' });
+          }
 
-      const results = data.data.map((track: any) => ({
-        id: track.id,
-        sourceId: track.id,
-        title: track.title,
-        artist: track.user.name,
-        coverUrl: track.artwork?.['150x150'] || track.artwork?.['480x480'] || 'https://picsum.photos/150/150',
-        duration: track.duration,
-        platform: 'Audius'
-      }));
+          // Check cache
+          const cacheKey = query.toLowerCase();
+          const cached = ytSearchCache.get(cacheKey);
+          if (cached && cached.expiresAt > Date.now()) {
+              return res.json(cached.data);
+          }
 
-      res.json(results);
+          // 1. Search for videos
+          const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=${limit}&key=${apiKey}`;
+          const searchResponse = await fetch(searchUrl);
+          const searchData = await searchResponse.json();
+
+          if (!searchData.items || searchData.items.length === 0) {
+              return res.json([]);
+          }
+
+          const videoIds = searchData.items.map((item: any) => item.id.videoId).join(',');
+
+          // 2. Fetch durations for those videos
+          const videosUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds}&key=${apiKey}`;
+          const videosResponse = await fetch(videosUrl);
+          const videosData = await videosResponse.json();
+
+          const durationMap = new Map();
+          if (videosData.items) {
+              for (const video of videosData.items) {
+                  durationMap.set(video.id, parseISO8601Duration(video.contentDetails.duration));
+              }
+          }
+
+          // 3. Format results
+          const results = searchData.items.map((item: any) => {
+              // YouTube titles often have the artist name "Artist - Title", try to parse it if generic channel
+              let title = item.snippet.title;
+              let artist = cleanArtistName(item.snippet.channelTitle);
+
+              return {
+                  id: `yt-${item.id.videoId}`, // Backend ID
+                  sourceId: item.id.videoId,   // Native ID
+                  title: title,
+                  artist: artist,
+                  coverUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url,
+                  duration: durationMap.get(item.id.videoId) || 0,
+                  platform: 'YouTube'
+              };
+          });
+
+          // Cache for 24 hours
+          ytSearchCache.set(cacheKey, {
+              data: results,
+              expiresAt: Date.now() + 24 * 60 * 60 * 1000
+          });
+
+          return res.json(results);
+
+      } else {
+          // Audius API (Legacy fallback/default)
+          const response = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}`);
+          const data = await response.json();
+
+          const results = data.data.slice(0, limit).map((track: any) => ({
+            id: `ad-${track.id}`,
+            sourceId: track.id,
+            title: track.title,
+            artist: track.user.name,
+            coverUrl: track.artwork?.['480x480'] || track.artwork?.['150x150'] || 'https://picsum.photos/150/150',
+            duration: track.duration,
+            platform: 'Audius'
+          }));
+
+          return res.json(results);
+      }
     } catch (error) {
-      console.error('Audius search error:', error);
+      console.error('Search error:', error);
       res.status(500).json({ error: 'Search failed' });
     }
   });
@@ -147,6 +241,42 @@ async function startServer() {
     } catch (error) {
         res.status(500).json({ error: 'Update failed' });
     }
+  });
+
+  // Option A - yt-dlp YouTube Audio Stream Resolver
+  app.get('/api/stream/youtube/:videoId', (req, res) => {
+      const { videoId } = req.params;
+
+      // Basic security: ensure valid YouTube ID format
+      if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+          return res.status(400).send('Invalid YouTube Video ID');
+      }
+
+      // Check Cache
+      const cached = ytStreamCache.get(videoId);
+      if (cached && cached.expiresAt > Date.now()) {
+          return res.redirect(302, cached.url);
+      }
+
+      // Resolve URL using yt-dlp
+      exec(`yt-dlp -g -f bestaudio "https://www.youtube.com/watch?v=${videoId}"`, (error, stdout, stderr) => {
+          if (error) {
+              console.error(`yt-dlp error: ${error.message}`);
+              return res.status(500).send('Failed to resolve stream URL');
+          }
+
+          const streamUrl = stdout.trim();
+          if (streamUrl) {
+              // Cache for 1 hour (3600000 ms)
+              ytStreamCache.set(videoId, {
+                  url: streamUrl,
+                  expiresAt: Date.now() + 3600000
+              });
+              res.redirect(302, streamUrl);
+          } else {
+              res.status(404).send('Stream URL not found');
+          }
+      });
   });
 
   // F3 - Public Rooms API
