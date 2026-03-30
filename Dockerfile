@@ -1,7 +1,11 @@
 FROM node:22-slim
 
-# Install OpenSSL for Prisma, curl for healthchecks, and yt-dlp for YouTube audio streaming
-RUN apt-get update -y && apt-get install -y openssl curl python3 yt-dlp && rm -rf /var/lib/apt/lists/*
+# Install OpenSSL for Prisma, curl/wget for healthchecks and downloads, and python3
+RUN apt-get update -y && apt-get install -y openssl curl wget python3 && rm -rf /var/lib/apt/lists/*
+
+# Install the absolute latest yt-dlp directly from GitHub (bypassing outdated apt packages)
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 # Set working directory
 WORKDIR /app

@@ -7,9 +7,6 @@ import { exec, spawn } from 'child_process';
 
 const prisma = new PrismaClient();
 
-// In-memory cache for yt-dlp resolved stream URLs (TTL: 1 hour)
-const ytStreamCache = new Map<string, { url: string, expiresAt: number }>();
-
 // In-memory cache for YouTube Search API responses (TTL: 24 hours) to save quota
 const ytSearchCache = new Map<string, { data: any, expiresAt: number }>();
 
