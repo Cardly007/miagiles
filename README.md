@@ -71,5 +71,22 @@ L'application sera accessible sur `http://localhost:4000` (ou le port défini da
    ```
    L'application sera accessible sur `http://localhost:3000`.
 
+---
+
+## 🛠️ Dépannage YouTube (Erreur "Bot" ou 400 Bad Request)
+
+YouTube est très agressif contre les requêtes serveurs et peut bloquer `yt-dlp` avec un message `Sign in to confirm you’re not a bot` ou `ERROR - Precondition check failed`.
+
+Pour contourner ce blocage, vous devez prouver que vous êtes humain en fournissant les **Cookies de votre navigateur** à l'application.
+
+### Comment fournir vos cookies à OnlyJam ?
+1. Sur votre navigateur (ordinateur), installez l'extension Chrome ou Firefox nommée **"Get cookies.txt LOCALLY"** ou **"EditThisCookie"**.
+2. Connectez-vous à votre compte sur [YouTube.com](https://www.youtube.com).
+3. Cliquez sur l'extension et choisissez d'exporter les cookies au format **Netscape** (`cookies.txt`).
+4. Placez ce fichier nommé exactement `cookies.txt` à la racine de ce projet (dans le dossier `/app` si vous êtes sous Docker, au même niveau que `package.json`).
+5. Redémarrez l'application.
+
+> Le backend (via `server.ts`) détectera automatiquement la présence de `cookies.txt` et l'utilisera avec `yt-dlp` pour autoriser la lecture des musiques.
+
 ## Licence
 MIT
