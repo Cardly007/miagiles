@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 
 const prisma = new PrismaClient();
 
@@ -252,30 +252,36 @@ async function startServer() {
           return res.status(400).send('Invalid YouTube Video ID');
       }
 
-      // Check Cache
-      const cached = ytStreamCache.get(videoId);
-      if (cached && cached.expiresAt > Date.now()) {
-          return res.redirect(302, cached.url);
-      }
+      // Proxy the stream directly to avoid CORS and NotSupportedError with raw URLs
+      // This forces the audio to go through our server as a generic audio stream
 
-      // Resolve URL using yt-dlp
-      exec(`yt-dlp -g -f bestaudio "https://www.youtube.com/watch?v=${videoId}"`, (error, stdout, stderr) => {
-          if (error) {
-              console.error(`yt-dlp error: ${error.message}`);
-              return res.status(500).send('Failed to resolve stream URL');
-          }
+      res.setHeader('Content-Type', 'audio/webm');
+      res.setHeader('Transfer-Encoding', 'chunked');
 
-          const streamUrl = stdout.trim();
-          if (streamUrl) {
-              // Cache for 1 hour (3600000 ms)
-              ytStreamCache.set(videoId, {
-                  url: streamUrl,
-                  expiresAt: Date.now() + 3600000
-              });
-              res.redirect(302, streamUrl);
-          } else {
-              res.status(404).send('Stream URL not found');
+      // Use spawn to pipe stdout to the response
+      const ytDlp = spawn('yt-dlp', [
+          '-f', 'bestaudio', // Get best audio
+          '-o', '-',         // Output to stdout
+          `https://www.youtube.com/watch?v=${videoId}`
+      ]);
+
+      ytDlp.stdout.pipe(res);
+
+      ytDlp.stderr.on('data', (data) => {
+          console.error(`yt-dlp stderr: ${data}`);
+      });
+
+      ytDlp.on('close', (code) => {
+          if (code !== 0) {
+              console.error(`yt-dlp process exited with code ${code}`);
+              if (!res.headersSent) {
+                  res.status(500).send('Stream error');
+              }
           }
+      });
+
+      req.on('close', () => {
+          ytDlp.kill(); // Kill process if client disconnects
       });
   });
 

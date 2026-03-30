@@ -1,56 +1,73 @@
-# OnlyJam
+# OnlyJam V2
 
-**OnlyJam** is a collaborative live music-listening platform designed to connect people through shared audio experiences. Whether you are hosting a digital party, a focused study session, or just want to listen to music simultaneously with friends, OnlyJam ensures everyone is on the same beat.
+**OnlyJam** est une plateforme d'écoute musicale collaborative et synchronisée en temps réel, conçue pour connecter les gens à travers des expériences audio partagées (Jams). Avec sa V2, l'application intègre désormais la recherche YouTube, le chat en temps réel, un mode anonyme, et un système social complet.
 
-## Core Concept
-OnlyJam allows a **Host** to create a live session (a "Jam") that **Guests** can join. Guests can search for music and add it to a shared Live Queue. The core magic of OnlyJam is its **Jam Sync** technology, which ensures that playback starts and stays perfectly synchronized across all connected devices, down to the millisecond, no matter when a guest joins.
+*Consultez [ARCHITECTURE.md](ARCHITECTURE.md) pour les détails techniques sur la synchronisation audio (Jam Sync) et le proxy yt-dlp.*
 
-## Features
+## Fonctionnalités Principales (V2)
 
-### 🎵 Free Music Streaming (Audius Integration)
-Search and stream thousands of tracks directly within the app using the **Audius Public API**.
-- No accounts or API keys required.
-- Integrated backend proxy for fast, secure, and normalized search results mapping directly to the live queue.
+### 🎵 Streaming Gratuit (Audius & YouTube)
+Recherchez et écoutez des milliers de titres.
+- Intégration de l'API publique d'Audius.
+- **Nouveau :** Recherche via la YouTube Data API v3 avec lecture audio native via `yt-dlp` côté serveur.
 
-### ⚡ Jam Sync (Precise Audio Synchronization)
-Experience true synchronized listening.
-- The Host acts as the "Time Master", setting the `startTime` when a track begins.
-- Guests' devices calculate the precise time offset and utilize the browser's native **Audio Context API** to join the stream exactly where it currently is.
-- No more counting down "3, 2, 1, Play!".
+### ⚡ Jam Sync (Synchronisation Milliseconde)
+- L'hôte contrôle la lecture. Les invités rejoignent le flux exactement à la bonne seconde grâce au décalage temporel serveur/client.
+- **Nouveau :** L'audio est désormais global. Vous pouvez naviguer dans l'application (Chat, Profil, Social) sans que la musique ne se coupe !
 
-### 🛡️ Host Moderation & Suggestion Mode
-Keep the vibe exactly how you want it with robust moderation tools designed for the Host.
-- **Suggestion Mode:** When activated, any track added by a guest is placed in a `PENDING` state. It won't play until the Host explicitly approves it.
-- **Host Panel:** A dedicated interface for the Host to manage settings, approve/reject pending track requests, and monitor the room.
+### 💬 Chat en Temps Réel & Mode Anonyme
+- Discutez en direct pendant l'écoute avec le nouveau **Live Chat Overlay** (style Instagram Live sur mobile).
+- **Mode Anonyme (Anonymous Music) :** L'hôte peut masquer l'auteur des musiques ajoutées pour faire deviner qui a mis tel ou tel morceau.
 
-### 🚫 User Banning System
-Maintain a safe and enjoyable environment.
-- Hosts can view the list of connected users and instantly ban disruptive guests.
-- Banning immediately disconnects the user's socket connection and prevents them from re-joining the specific Jam session.
+### 👥 Système Social et Persistance
+- **Profils Utilisateurs :** L'historique complet de vos sessions est sauvegardé.
+- **Amis & Live Now :** Ajoutez vos amis et voyez en temps réel s'ils sont en train d'écouter de la musique pour les rejoindre.
+- La session entière (file d'attente, chat, lecture) est persistante. Recharger la page ne vous déconnecte plus du Jam.
 
-## Tech Stack
-- **Frontend:** React, Vite, Tailwind CSS, Lucide React, Socket.io-client, Audio Context API.
-- **Backend:** Node.js, Express, Socket.io (WebSockets).
-- **Database:** SQLite with **Prisma ORM** (Typesafe queries and schema migrations).
+---
 
-## Getting Started
+## 🚀 Démarrer le Projet
 
-1. **Install Dependencies:**
+Vous pouvez lancer OnlyJam de deux manières : avec Docker (recommandé pour inclure toutes les dépendances audio) ou en local (Node.js).
+
+### Prérequis (Variables d'environnement)
+Avant de lancer le projet, configurez vos clés d'API.
+1. Copiez `.env.example` vers `.env` (ou `.env.docker.example` vers `.env` si vous utilisez Docker).
+2. Renseignez votre `YOUTUBE_API_KEY` (obtenue via Google Cloud Console).
+
+### Option 1 : Lancer avec Docker (Recommandé)
+Docker installera automatiquement `yt-dlp`, Python, et configurera la base de données.
+
+```bash
+docker-compose up --build
+```
+L'application sera accessible sur `http://localhost:4000` (ou le port défini dans `docker-compose.yml`).
+
+### Option 2 : Lancer en Local (Node.js)
+
+1. **Installer yt-dlp (Requis pour YouTube)**
+   Vous devez avoir `python3` et `yt-dlp` installés sur votre machine (ou sandbox) pour que la lecture YouTube fonctionne.
+   ```bash
+   sudo apt-get update && sudo apt-get install -y python3 yt-dlp
+   ```
+
+2. **Installer les dépendances Node.js**
    ```bash
    npm install
    ```
 
-2. **Initialize Database:**
+3. **Initialiser la base de données SQLite**
+   (Utilisez strictement Prisma v6 pour éviter les conflits de version)
    ```bash
    npx prisma@6 db push
    npx prisma@6 generate
    ```
 
-3. **Run Development Server:**
+4. **Lancer le serveur de développement**
    ```bash
    npm run dev
    ```
-   The application will be available at `http://localhost:3000`.
+   L'application sera accessible sur `http://localhost:3000`.
 
-## License
+## Licence
 MIT
