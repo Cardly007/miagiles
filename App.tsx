@@ -218,7 +218,7 @@ const PlayerView: React.FC<{
         if (isPlaying) {
             onPauseTrack();
         } else {
-            if (audioRef.current && session?.nowPlaying && session.isPaused) {
+            if (session?.nowPlaying && session.isPaused) {
                 onResumeTrack();
             } else if (session?.nowPlaying) {
                 // Not playing and no source node, restart track
@@ -469,8 +469,9 @@ const SearchView: React.FC<{
     const handlePlayPreview = (song: Song) => {
         if (!song.sourceId) return;
 
-        if (song.source === 'YouTube') {
-            alert('Preview is disabled for YouTube videos. Add to queue to listen!');
+        // Cannot preview if a jam is currently playing to avoid overlap
+        if (session?.nowPlaying && !session.isPaused) {
+            alert('Preview is disabled while a Jam track is playing. Pause the Jam to preview.');
             return;
         }
 
@@ -486,8 +487,12 @@ const SearchView: React.FC<{
             previewAudio.pause();
         }
 
+        const streamUrl = song.source === 'YouTube'
+            ? `/api/stream/youtube/${song.sourceId}`
+            : `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
+
         // Create new audio element
-        const audio = new Audio(`https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`);
+        const audio = new Audio(streamUrl);
         audio.play().catch(e => console.error("Error playing preview:", e));
 
         // Listen for end to reset state
