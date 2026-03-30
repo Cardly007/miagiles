@@ -36,3 +36,11 @@ Ce document liste les scénarios de test pour valider les nouvelles fonctionnali
 - [ ] **Persistance de l'état (Refresh)** : En tant que participant à un Jam, recharger complètement la page (F5). La session doit être restaurée (morceau en cours, position de lecture, file d'attente) sans être coupée.
 - [ ] **Persistance de la Queue** : Ajouter un titre à la file. Recharger la page. Le titre doit toujours être dans la file d'attente (la DB est source de vérité).
 - [ ] **Pause persistante** : L'hôte met la session en pause. Un nouvel invité rejoint la session : sa lecture doit être en pause.
+
+## Intégration YouTube & yt-dlp (Option A)
+- [ ] **Recherche Audius** : Rechercher "Pop", vérifier que des résultats Audius apparaissent avec l'icône grise.
+- [ ] **Toggle YouTube** : Basculer le toggle sur YouTube, rechercher "Lofi", vérifier que les résultats YouTube apparaissent avec le badge rouge.
+- [ ] **Erreur Clé API** : Supprimer la clé `YOUTUBE_API_KEY` dans le fichier `.env`, rechercher sur YouTube, vérifier l'apparition du message d'erreur 503 (ou fallback).
+- [ ] **Ajout Queue** : Ajouter un son YouTube dans la file d'attente d'un Jam, vérifier que le badge "YouTube" est présent.
+- [ ] **Désactivation Preview** : Cliquer sur l'image d'un son YouTube dans les résultats de recherche. Vérifier qu'un message d'alerte s'affiche bloquant la "preview".
+- [ ] **Lecture synchronisée (Jam Sync)** : Jouer une musique YouTube en tant qu'Hôte. Ouvrir une session invité. Vérifier que la musique joue de manière synchronisée, utilisant le backend `yt-dlp` (`/api/stream/youtube/:videoId`).

@@ -1,17 +1,20 @@
 import React from 'react';
 import { Song } from '../types';
-import { Plus, ArrowUp, Check, X, Smartphone, Cloud, Music, Play, Pause } from 'lucide-react';
+import { Plus, ArrowUp, Check, X, Smartphone, Cloud, Music, Play, Pause, Ghost } from 'lucide-react';
 
 interface SongItemProps {
   song: Song;
   isQueue?: boolean;
   isApproval?: boolean; // New prop for Approval Queue
   isPlaying?: boolean; // New prop for playing state
+  isAnonymousSession?: boolean; // New prop for Anonymous Mode
+  isHost?: boolean;
   onAdd?: () => void;
   onVote?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
   onPlay?: () => void; // Callback to play the song
+  onReveal?: () => void; // Callback to reveal anonymous author
 }
 
 const SourceIcon = ({ source }: { source: Song['source'] }) => {
@@ -30,12 +33,17 @@ export const SongItem: React.FC<SongItemProps> = ({
   isQueue = false, 
   isApproval = false,
   isPlaying = false,
+  isAnonymousSession = false,
+  isHost = false,
   onAdd, 
   onVote,
   onApprove,
   onReject,
-  onPlay
+  onPlay,
+  onReveal
 }) => {
+  const showAuthor = !isAnonymousSession || song.isRevealed;
+
   return (
     <div className="flex items-center justify-between p-3 mb-2 bg-brand-card rounded-xl hover:bg-zinc-900 transition-colors group border border-white/5">
       <div className="flex items-center gap-3 flex-1 overflow-hidden">
@@ -65,12 +73,27 @@ export const SongItem: React.FC<SongItemProps> = ({
           <h4 className="text-white font-medium truncate text-sm">{song.title}</h4>
           <div className="flex items-center gap-2">
             <p className="text-gray-400 text-xs truncate">{song.artist}</p>
-            {isQueue && <span className="text-[10px] text-zinc-600">• {song.addedBy}</span>}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${song.source === 'YouTube' ? 'bg-[#FF0000] text-white' : 'bg-gray-600 text-white'}`}>
+                {song.source}
+            </span>
+            {isQueue && (
+                <span className={`text-[10px] flex items-center gap-1 ${showAuthor ? 'text-zinc-600' : 'text-purple-500 font-bold'}`}>
+                    • {showAuthor ? song.addedBy : <><Ghost size={10} /> Anonymous</>}
+                </span>
+            )}
           </div>
         </div>
       </div>
 
       <div className="flex items-center gap-3 pl-3">
+        {isAnonymousSession && isHost && !song.isRevealed && isPlaying && (
+            <button
+               onClick={onReveal}
+               className="text-xs bg-purple-600/20 text-purple-500 px-2 py-1 rounded-md font-bold hover:bg-purple-600 hover:text-white transition-colors"
+            >
+               Reveal
+            </button>
+        )}
         {isApproval ? (
           <div className="flex items-center gap-2">
              <button onClick={onReject} className="w-8 h-8 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition-colors">
