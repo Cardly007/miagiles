@@ -410,7 +410,7 @@ const SearchView: React.FC<{
 }> = ({ onAddSong, isApprovalMode, session }) => {
     const [query, setQuery] = useState('');
     const [searchPlatform, setSearchPlatform] = useState<'audius' | 'youtube'>('audius');
-    const [activeTab, setActiveTab] = useState<'All' | 'Spotify' | 'YouTube' | 'SoundCloud' | 'Local'>('All');
+    const [activeTab, setActiveTab] = useState<'All' | 'Audius' | 'YouTube' | 'Local'>('All');
     const [apiResults, setApiResults] = useState<Song[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const { addNotification } = useNotifications();
@@ -439,7 +439,7 @@ const SearchView: React.FC<{
                         title: d.title,
                         artist: d.artist,
                         coverUrl: d.coverUrl,
-                        source: d.platform === 'YOUTUBE' ? 'YouTube' : d.platform,
+                        source: (d.platform && d.platform.toLowerCase() === 'youtube') ? 'YouTube' : 'Audius',
                         duration: d.duration > 0 ? `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}` : 'Live',
                         votes: 0,
                         addedBy: ''
@@ -487,7 +487,8 @@ const SearchView: React.FC<{
             previewAudio.pause();
         }
 
-        const streamUrl = song.source === 'YouTube'
+        const isYoutube = song.source && song.source.toLowerCase() === 'youtube';
+        const streamUrl = isYoutube
             ? `/api/stream/youtube/${song.sourceId}`
             : `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
 
@@ -509,7 +510,8 @@ const SearchView: React.FC<{
     const results = [...localResults, ...apiResults].filter(s => {
         if (activeTab === 'All') return true;
         if (activeTab === 'Local') return s.source === 'Local';
-        return s.source === activeTab;
+        // Case-insensitive check because search API can return mixed cases
+        return s.source && s.source.toLowerCase() === activeTab.toLowerCase();
     });
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -813,7 +815,8 @@ const App: React.FC = () => {
         const playTrack = async () => {
             if (!currentSong.sourceId) return;
 
-            const streamUrl = currentSong.source === 'YouTube'
+            const isYoutube = currentSong.source && currentSong.source.toLowerCase() === 'youtube';
+            const streamUrl = isYoutube
                 ? `/api/stream/youtube/${currentSong.sourceId}`
                 : `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
 
@@ -838,9 +841,12 @@ const App: React.FC = () => {
                 try {
                     await audio.play();
                     setIsAudioPlaying(true);
-                } catch (error) {
+                } catch (error: any) {
                     console.error("Error playing audio for sync:", error);
                     setIsAudioPlaying(false);
+                    // Instead of an alert which blocks the main thread,
+                    // we log it and perhaps wait for a click elsewhere to resume.
+                    // The user interaction error (NotAllowedError) just means they need to tap play or tap anywhere.
                 }
             }
         };

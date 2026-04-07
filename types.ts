@@ -43,6 +43,7 @@ export interface JamSession {
   };
   currentTrackStartTime?: string; // Added for Sync
   isPaused?: boolean;
+  isAnonymous?: boolean;
 }
 
 export enum ViewState {

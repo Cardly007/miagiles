@@ -681,7 +681,10 @@ async function startServer() {
          const { sessionId } = data;
          await prisma.jamSession.update({
            where: { id: sessionId },
-           data: { isPaused: true }
+           data: {
+               isPaused: true,
+               pausedAt: new Date()
+           }
          });
          io.to(sessionId).emit('track-paused');
        } catch (error) {
@@ -695,16 +698,22 @@ async function startServer() {
          const session = await prisma.jamSession.findUnique({ where: { id: sessionId } });
 
          if (session && session.currentTrackStartTime) {
-             // In a real app we'd need to adjust startTime based on how long it was paused
-             // For simplicity, we just resume and trust the client's AudioContext or recalculate
-             const now = new Date();
+             let newStartTime = session.currentTrackStartTime;
+             if (session.pausedAt) {
+                 const pauseDuration = new Date().getTime() - new Date(session.pausedAt).getTime();
+                 newStartTime = new Date(new Date(session.currentTrackStartTime).getTime() + pauseDuration);
+             }
 
              await prisma.jamSession.update({
                where: { id: sessionId },
-               data: { isPaused: false }
+               data: {
+                   isPaused: false,
+                   currentTrackStartTime: newStartTime,
+                   pausedAt: null
+               }
              });
 
-             io.to(sessionId).emit('track-resumed', { startTime: session.currentTrackStartTime.toISOString() });
+             io.to(sessionId).emit('track-resumed', { startTime: newStartTime.toISOString() });
          }
        } catch (error) {
          console.error('Error resuming track', error);
