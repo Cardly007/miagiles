@@ -1214,9 +1214,11 @@ const App: React.FC = () => {
 
   const handleAddSong = (song: Song) => {
       if (!session || !user) return;
-      // Optimistically add with temporary ID, sourceId remains Audius ID
+      // Optimistically add with temporary ID, preserving the original sourceId
       const tempId = Math.random().toString();
-      const newSong = { ...song, addedBy: user.id, votes: 1, sourceId: song.id, id: tempId };
+      // Ensure we DO NOT overwrite sourceId with the backend id (which might be prefixed with yt- or ad-)
+      // We keep song.sourceId intact as returned by the search API
+      const newSong = { ...song, addedBy: user.id, votes: 1, id: tempId };
       
       const isAutoPlay = user.isHost && !session.nowPlaying && session.queue.length === 0 && !session.settings.approvalRequired;
 
