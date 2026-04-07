@@ -3,7 +3,6 @@ import { createServer as createViteServer } from 'vite';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
-import { exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -240,69 +239,6 @@ async function startServer() {
     } catch (error) {
         res.status(500).json({ error: 'Update failed' });
     }
-  });
-
-  // Option A - yt-dlp YouTube Audio Stream Resolver
-  app.get('/api/stream/youtube/:videoId', (req, res) => {
-      const { videoId } = req.params;
-
-      // Basic security: ensure valid YouTube ID format
-      if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-          return res.status(400).send('Invalid YouTube Video ID');
-      }
-
-      // Proxy the stream directly to avoid CORS and NotSupportedError with raw URLs
-      // This forces the audio to go through our server as a generic audio stream
-
-      res.setHeader('Content-Type', 'audio/webm');
-      res.setHeader('Transfer-Encoding', 'chunked');
-
-      // Use spawn to pipe stdout to the response
-      const args = [
-          '-f', 'bestaudio', // Get best audio
-          '-o', '-',         // Output to stdout
-          '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          '--referer', 'https://www.google.com/',
-          '--extractor-args', 'youtube:player_client=android' // Helps bypass JS runtime requirements
-      ];
-
-      // Check for cookies file to bypass bot protection
-      const cookiesPath = path.resolve(__dirname, 'cookies.txt');
-      if (fs.existsSync(cookiesPath)) {
-          args.push('--cookies', cookiesPath);
-      } else {
-          console.warn('⚠️ WARNING: cookies.txt not found. YouTube may block requests with a 400 Bad Request error (bot detection).');
-      }
-
-      args.push(`https://www.youtube.com/watch?v=${videoId}`);
-
-      const ytDlp = spawn('yt-dlp', args);
-
-      ytDlp.stdout.pipe(res);
-
-      ytDlp.stderr.on('data', (data) => {
-          const msg = data.toString();
-          // Filter out noisy warnings that don't necessarily break the stream,
-          // but log errors prominently.
-          if (msg.includes('ERROR')) {
-              console.error(`yt-dlp ERROR: ${msg}`);
-          } else if (msg.includes('WARNING')) {
-              console.warn(`yt-dlp WARNING: ${msg}`);
-          }
-      });
-
-      ytDlp.on('close', (code) => {
-          if (code !== 0) {
-              console.error(`yt-dlp process exited with code ${code}`);
-              if (!res.headersSent) {
-                  res.status(500).send('Stream error');
-              }
-          }
-      });
-
-      req.on('close', () => {
-          ytDlp.kill(); // Kill process if client disconnects
-      });
   });
 
   // F3 - Public Rooms API
