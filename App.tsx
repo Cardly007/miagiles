@@ -18,6 +18,7 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import YouTube, { YouTubeEvent, YouTubePlayer } from 'react-youtube';
 
 import { ChatPanel, ChatMessageData } from './components/ChatPanel';
 import { LiveChatOverlay } from './components/LiveChatOverlay';
@@ -475,6 +476,12 @@ const SearchView: React.FC<{
             return;
         }
 
+        const isYoutube = song.source && song.source.toLowerCase() === 'youtube';
+        if (isYoutube) {
+             alert('YouTube preview is currently only supported in the live Jam due to browser autoplay policies. Add the track to queue to play it.');
+             return;
+        }
+
         // If clicking the same song that is currently playing, pause it
         if (previewingSongId === song.id && previewAudio) {
             previewAudio.pause();
@@ -487,10 +494,7 @@ const SearchView: React.FC<{
             previewAudio.pause();
         }
 
-        const isYoutube = song.source && song.source.toLowerCase() === 'youtube';
-        const streamUrl = isYoutube
-            ? `/api/stream/youtube/${song.sourceId}`
-            : `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
+        const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
 
         // Create new audio element
         const audio = new Audio(streamUrl);
@@ -768,7 +772,28 @@ const App: React.FC = () => {
   const [audioDuration, setAudioDuration] = useState(0);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const ytPlayerRef = React.useRef<YouTubePlayer | null>(null);
   const hasTriggeredNextRef = React.useRef(false);
+  const ytPlayerReadyRef = React.useRef(false);
+
+  // Update YouTube progress state
+  useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isAudioPlaying && session?.nowPlaying && session.nowPlaying.source && session.nowPlaying.source.toLowerCase() === 'youtube') {
+             interval = setInterval(async () => {
+                 if (ytPlayerRef.current) {
+                     const current = await ytPlayerRef.current.getCurrentTime();
+                     const duration = await ytPlayerRef.current.getDuration();
+                     if (current && duration) {
+                         setAudioCurrentTime(current);
+                         setAudioDuration(duration);
+                         setAudioProgress((current / duration) * 100);
+                     }
+                 }
+             }, 1000);
+        }
+        return () => clearInterval(interval);
+  }, [isAudioPlaying, session?.nowPlaying]);
 
   // Global Audio Sync Logic (Moved from PlayerView)
   useEffect(() => {
@@ -806,6 +831,7 @@ const App: React.FC = () => {
         if (!currentSong || !session.currentTrackStartTime) {
             audio.pause();
             audio.src = '';
+            if (ytPlayerRef.current) ytPlayerRef.current.pauseVideo();
             setIsAudioPlaying(false);
             setAudioProgress(0);
             setAudioCurrentTime(0);
@@ -816,37 +842,61 @@ const App: React.FC = () => {
             if (!currentSong.sourceId) return;
 
             const isYoutube = currentSong.source && currentSong.source.toLowerCase() === 'youtube';
-            const streamUrl = isYoutube
-                ? `/api/stream/youtube/${currentSong.sourceId}`
-                : `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
-
-            if (audio.src !== streamUrl && audio.src !== window.location.origin + streamUrl) {
-                audio.src = streamUrl;
-                hasTriggeredNextRef.current = false;
-            }
-
             const serverStartTime = new Date(session.currentTrackStartTime!).getTime();
             const now = Date.now();
             let offset = (now - serverStartTime) / 1000;
             if (offset < 0) offset = 0;
 
-            if (Math.abs(audio.currentTime - offset) > 2) {
-                audio.currentTime = offset;
-            }
-
-            if (session.isPaused) {
+            if (isYoutube) {
+                // Pause HTML5 Audio
                 audio.pause();
-                setIsAudioPlaying(false);
+                audio.src = '';
+
+                if (ytPlayerRef.current && ytPlayerReadyRef.current) {
+                    const ytCurrentTime = await ytPlayerRef.current.getCurrentTime();
+                    // Avoid seeking if we are already close enough, to prevent stuttering
+                    if (Math.abs(ytCurrentTime - offset) > 2) {
+                        ytPlayerRef.current.seekTo(offset, true);
+                    }
+
+                    if (session.isPaused) {
+                        ytPlayerRef.current.pauseVideo();
+                        setIsAudioPlaying(false);
+                    } else {
+                        ytPlayerRef.current.playVideo();
+                        setIsAudioPlaying(true);
+                        hasTriggeredNextRef.current = false;
+                    }
+                }
             } else {
-                try {
-                    await audio.play();
-                    setIsAudioPlaying(true);
-                } catch (error: any) {
-                    console.error("Error playing audio for sync:", error);
+                // Pause YouTube Video
+                if (ytPlayerRef.current) {
+                    ytPlayerRef.current.pauseVideo();
+                }
+
+                const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${currentSong.sourceId}/stream`;
+
+                if (audio.src !== streamUrl && audio.src !== window.location.origin + streamUrl) {
+                    audio.src = streamUrl;
+                    hasTriggeredNextRef.current = false;
+                }
+
+                if (Math.abs(audio.currentTime - offset) > 2) {
+                    audio.currentTime = offset;
+                }
+
+                if (session.isPaused) {
+                    audio.pause();
                     setIsAudioPlaying(false);
-                    // Instead of an alert which blocks the main thread,
-                    // we log it and perhaps wait for a click elsewhere to resume.
-                    // The user interaction error (NotAllowedError) just means they need to tap play or tap anywhere.
+                } else {
+                    try {
+                        await audio.play();
+                        setIsAudioPlaying(true);
+                    } catch (error: any) {
+                        console.error("Error playing audio for sync:", error);
+                        setIsAudioPlaying(false);
+                        // The user interaction error (NotAllowedError) just means they need to tap play or tap anywhere.
+                    }
                 }
             }
         };
@@ -1508,6 +1558,53 @@ const App: React.FC = () => {
              onClick={() => setView(ViewState.PLAYER)}
           />
       )}
+
+      {/* Hidden YouTube Player for backend-free playback */}
+      <div className="hidden" style={{ display: 'none' }}>
+          <YouTube
+              videoId={session?.nowPlaying && session.nowPlaying.source && session.nowPlaying.source.toLowerCase() === 'youtube' ? session.nowPlaying.sourceId : ''}
+              opts={{
+                  playerVars: {
+                      autoplay: 1,
+                      controls: 0,
+                  },
+              }}
+              onReady={(event: YouTubeEvent) => {
+                  ytPlayerRef.current = event.target;
+                  ytPlayerReadyRef.current = true;
+
+                  // Initial sync when player becomes ready, in case the effect ran before the iframe loaded
+                  if (session?.nowPlaying && session.nowPlaying.source && session.nowPlaying.source.toLowerCase() === 'youtube') {
+                      if (session.currentTrackStartTime) {
+                          const serverStartTime = new Date(session.currentTrackStartTime).getTime();
+                          let offset = (Date.now() - serverStartTime) / 1000;
+                          if (offset < 0) offset = 0;
+                          event.target.seekTo(offset, true);
+                          if (!session.isPaused) {
+                              event.target.playVideo();
+                          }
+                      }
+                  }
+              }}
+              onStateChange={(event: YouTubeEvent) => {
+                  // Playing state
+                  if (event.data === 1) {
+                      setIsAudioPlaying(true);
+                  }
+                  // Paused state
+                  else if (event.data === 2) {
+                      setIsAudioPlaying(false);
+                  }
+                  // Ended state
+                  else if (event.data === 0) {
+                      if (user?.isHost && !hasTriggeredNextRef.current) {
+                          hasTriggeredNextRef.current = true;
+                          handleNextTrack();
+                      }
+                  }
+              }}
+          />
+      </div>
 
       {/* Navigation (Only show if authenticated and not in Car Mode or Landing) */}
       {view !== ViewState.LANDING && view !== ViewState.AUTH && view !== ViewState.CAR_MODE && (
