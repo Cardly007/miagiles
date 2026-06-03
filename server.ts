@@ -172,9 +172,22 @@ async function startServer() {
   app.post('/api/users', async (req, res) => {
     try {
       const { name, bio, avatar } = req.body;
+
+      // Fallback pseudo if not provided
+      let pseudo = name || `User${Math.floor(Math.random() * 10000)}`;
+
+      // Check for uniqueness
+      let existingUser = await prisma.user.findUnique({ where: { pseudo } });
+      let counter = 1;
+      while (existingUser) {
+          pseudo = `${name}${counter}`;
+          existingUser = await prisma.user.findUnique({ where: { pseudo } });
+          counter++;
+      }
+
       const user = await prisma.user.create({
         data: {
-          pseudo: name,
+          pseudo: pseudo,
           bio: bio,
           photoUrl: avatar || 'https://picsum.photos/200/200',
         }
@@ -501,7 +514,8 @@ async function startServer() {
             thumbnail: track.coverUrl,
             sourceId: track.sourceId.toString(),
             platform: track.source,
-            duration: track.duration ? parseInt(track.duration.toString()) : 0, // Fallback if formatted
+            // duration is sometimes passed as a string like "4:13" from the frontend, let's parse it correctly to seconds
+            duration: track.duration ? (typeof track.duration === 'string' && track.duration.includes(':') ? track.duration.split(':').reduce((acc: number, time: string) => (60 * acc) + +time, 0) : parseInt(track.duration.toString()) || 0) : 0,
             status: status as 'QUEUED' | 'PENDING',
             sessionId: sessionId,
             addedById: userId,
