@@ -16,11 +16,12 @@ export interface Song {
   title: string;
   artist: string;
   coverUrl: string;
-  source: 'Spotify' | 'YouTube' | 'SoundCloud' | 'AppleMusic' | 'Local' | 'Audius';
+  source: 'Spotify' | 'YouTube' | 'SoundCloud' | 'AppleMusic' | 'Local' | 'Audius' | 'Jamendo';
   votes: number;
   addedBy: string;
   duration: string | number;
   status?: 'QUEUED' | 'PENDING' | 'PLAYING' | 'PLAYED';
+  streamUrl?: string; // Optionnel : Utilisé pour lire le fichier audio
 }
 
 export interface JamSession {

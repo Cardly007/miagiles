@@ -120,6 +120,31 @@ async function startServer() {
 
           return res.json(results);
 
+      } else if (platform === 'jamendo') {
+          const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || '918b695b';
+          const searchUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=jsonpretty&limit=${limit}&search=${encodeURIComponent(query)}`;
+
+          const response = await fetch(searchUrl);
+
+          if (!response.ok) {
+              return res.status(response.status).json({ error: `Jamendo API error: ${response.status}` });
+          }
+
+          const data = await response.json();
+
+          const results = data.results.map((track: any) => ({
+              id: `jamendo-${track.id}`, // Backend ID
+              sourceId: track.id,        // Native ID
+              title: track.name,
+              artist: track.artist_name,
+              coverUrl: track.image,
+              duration: track.duration, // Jamendo renvoie la durée en secondes
+              streamUrl: track.audio,
+              platform: 'Jamendo'
+          }));
+
+          return res.json(results);
+
       } else {
           // Audius API (Legacy fallback/default)
           const response = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}`);
@@ -147,9 +172,22 @@ async function startServer() {
   app.post('/api/users', async (req, res) => {
     try {
       const { name, bio, avatar } = req.body;
+
+      // Fallback pseudo if not provided
+      let pseudo = name || `User${Math.floor(Math.random() * 10000)}`;
+
+      // Check for uniqueness
+      let existingUser = await prisma.user.findUnique({ where: { pseudo } });
+      let counter = 1;
+      while (existingUser) {
+          pseudo = `${name}${counter}`;
+          existingUser = await prisma.user.findUnique({ where: { pseudo } });
+          counter++;
+      }
+
       const user = await prisma.user.create({
         data: {
-          pseudo: name,
+          pseudo: pseudo,
           bio: bio,
           photoUrl: avatar || 'https://picsum.photos/200/200',
         }
@@ -476,7 +514,8 @@ async function startServer() {
             thumbnail: track.coverUrl,
             sourceId: track.sourceId.toString(),
             platform: track.source,
-            duration: track.duration ? parseInt(track.duration.toString()) : 0, // Fallback if formatted
+            // duration is sometimes passed as a string like "4:13" from the frontend, let's parse it correctly to seconds
+            duration: track.duration ? (typeof track.duration === 'string' && track.duration.includes(':') ? track.duration.split(':').reduce((acc: number, time: string) => (60 * acc) + +time, 0) : parseInt(track.duration.toString()) || 0) : 0,
             status: status as 'QUEUED' | 'PENDING',
             sessionId: sessionId,
             addedById: userId,
