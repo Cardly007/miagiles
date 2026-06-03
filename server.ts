@@ -121,7 +121,7 @@ async function startServer() {
           return res.json(results);
 
       } else if (platform === 'jamendo') {
-          const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || '918b695';
+          const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || '918b695b';
           const searchUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=jsonpretty&limit=${limit}&search=${encodeURIComponent(query)}`;
 
           const response = await fetch(searchUrl);
