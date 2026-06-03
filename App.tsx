@@ -410,8 +410,8 @@ const SearchView: React.FC<{
     session: JamSession | null
 }> = ({ onAddSong, isApprovalMode, session }) => {
     const [query, setQuery] = useState('');
-    const [searchPlatform, setSearchPlatform] = useState<'audius' | 'youtube'>('audius');
-    const [activeTab, setActiveTab] = useState<'All' | 'Audius' | 'YouTube' | 'Local'>('All');
+    const [searchPlatform, setSearchPlatform] = useState<'audius' | 'youtube' | 'jamendo'>('audius');
+    const [activeTab, setActiveTab] = useState<'All' | 'Audius' | 'YouTube' | 'Jamendo' | 'Local'>('All');
     const [apiResults, setApiResults] = useState<Song[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const { addNotification } = useNotifications();
@@ -434,17 +434,27 @@ const SearchView: React.FC<{
                 const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&platform=${searchPlatform}`);
                 if (res.ok) {
                     const data = await res.json();
-                    const mappedData: Song[] = data.map((d: any) => ({
-                        id: d.id,
-                        sourceId: d.sourceId,
-                        title: d.title,
-                        artist: d.artist,
-                        coverUrl: d.coverUrl,
-                        source: (d.platform && d.platform.toLowerCase() === 'youtube') ? 'YouTube' : 'Audius',
-                        duration: d.duration > 0 ? `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}` : 'Live',
-                        votes: 0,
-                        addedBy: ''
-                    }));
+                    const mappedData: Song[] = data.map((d: any) => {
+                        let sourcePlatform: Song['source'] = 'Audius';
+                        if (d.platform && d.platform.toLowerCase() === 'youtube') {
+                            sourcePlatform = 'YouTube';
+                        } else if (d.platform && d.platform.toLowerCase() === 'jamendo') {
+                            sourcePlatform = 'Jamendo';
+                        }
+
+                        return {
+                            id: d.id,
+                            sourceId: d.sourceId,
+                            title: d.title,
+                            artist: d.artist,
+                            coverUrl: d.coverUrl,
+                            source: sourcePlatform,
+                            duration: d.duration > 0 ? `${Math.floor(d.duration / 60)}:${(d.duration % 60).toString().padStart(2, '0')}` : 'Live',
+                            streamUrl: d.streamUrl,
+                            votes: 0,
+                            addedBy: ''
+                        };
+                    });
                     setApiResults(mappedData);
                 }
             } catch (error) {
@@ -494,7 +504,7 @@ const SearchView: React.FC<{
             previewAudio.pause();
         }
 
-        const streamUrl = `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
+        const streamUrl = song.streamUrl || `https://discoveryprovider.audius.co/v1/tracks/${song.sourceId}/stream`;
 
         // Create new audio element
         const audio = new Audio(streamUrl);
@@ -514,6 +524,7 @@ const SearchView: React.FC<{
     const results = [...localResults, ...apiResults].filter(s => {
         if (activeTab === 'All') return true;
         if (activeTab === 'Local') return s.source === 'Local';
+        if (activeTab === 'Jamendo') return s.source === 'Jamendo';
         // Case-insensitive check because search API can return mixed cases
         return s.source && s.source.toLowerCase() === activeTab.toLowerCase();
     });
@@ -541,7 +552,7 @@ const SearchView: React.FC<{
              <div className="p-4 sticky top-0 bg-black/95 z-20 backdrop-blur-sm">
                 <h2 className="text-2xl font-bold mb-4">Find Music</h2>
                 
-                {/* Platform Toggle (Audius / YouTube) */}
+                {/* Platform Toggle (Audius / YouTube / Jamendo) */}
                 <div className="flex gap-2 mb-4 p-1 bg-zinc-900 border border-zinc-800 rounded-2xl">
                     <button
                        onClick={() => setSearchPlatform('audius')}
@@ -555,6 +566,12 @@ const SearchView: React.FC<{
                     >
                        <Play size={14} fill={searchPlatform === 'youtube' ? 'currentColor' : 'none'} /> YouTube
                     </button>
+                    <button
+                       onClick={() => setSearchPlatform('jamendo')}
+                       className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 ${searchPlatform === 'jamendo' ? 'bg-brand-red/20 text-brand-red border border-brand-red/30' : 'text-gray-500 hover:text-gray-300'}`}
+                    >
+                       <Music size={14} /> Jamendo
+                    </button>
                 </div>
 
                 {/* Search Bar */}
@@ -562,11 +579,24 @@ const SearchView: React.FC<{
                     <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
                     <input 
                         type="text" 
-                        placeholder={`Search on ${searchPlatform === 'audius' ? 'Audius' : 'YouTube'}...`}
+                        placeholder={`Search on ${searchPlatform === 'audius' ? 'Audius' : searchPlatform === 'jamendo' ? 'Jamendo' : 'YouTube'}...`}
                         className={`w-full bg-zinc-900 border text-white pl-12 pr-12 py-3.5 rounded-xl outline-none transition-all placeholder:text-zinc-600 ${searchPlatform === 'youtube' ? 'border-[#FF0000]/50 focus:border-[#FF0000]' : 'border-zinc-800 focus:border-brand-red'}`}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                     />
+                </div>
+
+                {/* Tabs */}
+                <div className="flex gap-4 border-b border-zinc-800 px-4 overflow-x-auto no-scrollbar">
+                    {['All', 'Audius', 'YouTube', 'Jamendo', 'Local'].map(tab => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab as any)}
+                            className={`pb-3 font-bold whitespace-nowrap ${activeTab === tab ? 'text-white border-b-2 border-brand-red' : 'text-gray-500'}`}
+                        >
+                            {tab}
+                        </button>
+                    ))}
                 </div>
             </div>
 

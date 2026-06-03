@@ -120,6 +120,31 @@ async function startServer() {
 
           return res.json(results);
 
+      } else if (platform === 'jamendo') {
+          const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID || '918b695';
+          const searchUrl = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=jsonpretty&limit=${limit}&search=${encodeURIComponent(query)}`;
+
+          const response = await fetch(searchUrl);
+
+          if (!response.ok) {
+              return res.status(response.status).json({ error: `Jamendo API error: ${response.status}` });
+          }
+
+          const data = await response.json();
+
+          const results = data.results.map((track: any) => ({
+              id: `jamendo-${track.id}`, // Backend ID
+              sourceId: track.id,        // Native ID
+              title: track.name,
+              artist: track.artist_name,
+              coverUrl: track.image,
+              duration: track.duration, // Jamendo renvoie la durée en secondes
+              streamUrl: track.audio,
+              platform: 'Jamendo'
+          }));
+
+          return res.json(results);
+
       } else {
           // Audius API (Legacy fallback/default)
           const response = await fetch(`https://discoveryprovider.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}`);
